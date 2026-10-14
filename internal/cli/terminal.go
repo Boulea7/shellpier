@@ -501,20 +501,27 @@ func terminalControl(ctx context.Context, mode string, args []string, stdin io.R
 	}
 	// A closed bounded snapshot remains usable without a worker process.
 	snapshotPath := filepath.Join(filepath.Dir(path), "snapshot.json")
-	if mode == "read" || mode == "status" || mode == "close" {
+	readSnapshot := func() (bool, error) {
+		if mode != "read" && mode != "status" && mode != "close" {
+			return false, nil
+		}
 		if snapshot, e := terminalSnapshotFile(snapshotPath); e == nil {
 			if snapshot.SessionID != state.ID {
-				return errors.New("terminal snapshot belongs to another session")
+				return true, errors.New("terminal snapshot belongs to another session")
 			}
 			if mode == "read" {
 				r, e := terminalReadSnapshot(snapshot, *cursor, *limit)
 				if e != nil {
-					return e
+					return true, e
 				}
-				return json.NewEncoder(stdout).Encode(r)
+				return true, json.NewEncoder(stdout).Encode(r)
 			}
-			return terminalPrintMetadata(stdout, *machine, terminalMeta(state, path, snapshot))
+			return true, terminalPrintMetadata(stdout, *machine, terminalMeta(state, path, snapshot))
 		}
+		return false, nil
+	}
+	if found, err := readSnapshot(); found {
+		return err
 	}
 	encoded, err := json.Marshal(body)
 	if err != nil {
@@ -532,11 +539,19 @@ func terminalControl(ctx context.Context, mode string, args []string, stdin io.R
 	defer client.CloseIdleConnections()
 	resp, err := client.Do(req)
 	if err != nil {
+		// The worker persists its final snapshot before closing the listener.
+		// It may have exited between our initial snapshot check and request.
+		if found, snapshotErr := readSnapshot(); found {
+			return snapshotErr
+		}
 		return errors.New("terminal worker unavailable; no operation was replayed")
 	}
 	defer resp.Body.Close()
 	data, err := io.ReadAll(io.LimitReader(resp.Body, 2*terminalCapacity+1))
 	if err != nil {
+		if found, snapshotErr := readSnapshot(); found {
+			return snapshotErr
+		}
 		return err
 	}
 	if len(data) > 2*terminalCapacity {

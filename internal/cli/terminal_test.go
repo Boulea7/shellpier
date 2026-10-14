@@ -842,3 +842,38 @@ func TestTerminalStateRereadRejectsNonPrivateReplacement(t *testing.T) {
 		t.Fatal("unsafe replacement retried or read")
 	}
 }
+
+func TestTerminalReadSnapshotAfterWorkerRequestDisconnect(t *testing.T) {
+	state, path := terminalTestState(t)
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		code := 7
+		snapshot := terminalReadResult{SessionID: state.ID, Data: []byte("final\n"), NextCursor: 6, Closed: true, ExitCode: &code}
+		if err := writeJSONPrivate(filepath.Join(filepath.Dir(path), "snapshot.json"), snapshot); err != nil {
+			t.Error(err)
+		}
+		connection, _, err := w.(http.Hijacker).Hijack()
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		connection.Close()
+	}))
+	defer server.Close()
+	state.ControlURL = server.URL
+	if err := terminalReplacePrivate(path, state); err != nil {
+		t.Fatal(err)
+	}
+	var output bytes.Buffer
+	if err := terminalControl(context.Background(), "read", []string{"--state", path}, strings.NewReader(""), &output, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	var result terminalReadResult
+	if err := json.Unmarshal(output.Bytes(), &result); err != nil || !result.Closed || result.ExitCode == nil || *result.ExitCode != 7 || string(result.Data) != "final\n" {
+		t.Fatalf("lost final snapshot: %s %v", output.Bytes(), err)
+	}
+	if requests.Load() != 1 {
+		t.Fatal("control request was replayed")
+	}
+}
