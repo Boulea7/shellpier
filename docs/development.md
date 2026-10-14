@@ -7,11 +7,11 @@
 | 位置 | 职责 |
 |---|---|
 | `cmd/shellpier/main.go` | 信号取消、标准流、错误输出与退出码 |
-| `internal/cli` | 命令分发、帮助、输出与会话生命周期 |
+| `internal/cli` | 命令分发、机器接口、持久终端与会话生命周期 |
 | `internal/access` | 票据、SSH 连接、主机公钥校验与配置生成 |
-| `internal/sshd` | 当前用户 SSH exec、SFTP 与会话关闭 |
+| `internal/sshd` | 当前用户 SSH exec、PTY/SFTP 与会话关闭 |
 | `internal/relay` | HTTPS/WSS、角色配对、认证、容量、TTL 与撤销 |
-| `internal/platform` | 文件权限、命令进程树与防睡眠 |
+| `internal/platform` | 文件权限、Unix PTY/Windows ConPTY、命令进程树与防睡眠 |
 | `internal/netutil` | 地址、接口与网络诊断 |
 | `legacy` | 独立 PowerShell/Bitvise/Plink 路线及契约测试 |
 | `scripts` | 下载、启动、打包与文档/skill 校验 |
@@ -28,11 +28,13 @@ Run(ctx context.Context, args []string, stdin io.Reader,
     stdout, stderr io.Writer, version string) error
 ```
 
-使用传入的流输出，由入口处理退出码。沿用 `flags` helper 和相应命令的参数解析规则；帮助必须先于读取票据、创建文件与网络请求。`Run` 将 `flag.ErrHelp` 转为成功。
+使用传入的流输出，由入口处理退出码。使用 `flags` 创建参数集、`parseFlags` 支持选项与位置参数混排；远端命令通过 `splitCommandArgs` 保留 `--` 之后的原始参数；帮助必须先于读取票据、创建文件与网络请求。`Run` 将 `flag.ErrHelp` 转为成功。
 
-同步更新 `cli.go` 的分发与顶层帮助、`completion.go` 的 `completionCommands`，以及新增参数的 shell 补全。正文走 stdout，诊断走 stderr；JSON 摘要参考 `ticketSummary`/`summarizeTicket`，不直接序列化含私钥或 token 的票据。
+新命令在 `schema.go` 的 `commandSpecs` 注册 usage、flags、effects 和 stdio/output 模式；`schema` 与补全从同一列表读取，无需再手写补全命令清单。同步 `cli.go` 分发、顶层帮助和公开命令说明。正文走 stdout，诊断走 stderr；全局 `--json` 的错误由 `Run` 统一输出，命令返回 error，不重复打印错误 JSON。JSON 摘要不直接序列化含私钥或 token 的票据。
 
 票据与配置复用 `access.Read`、`access.WriteConfig`；需要 SSH 时复用 `access.DialRetry`，保留主机公钥校验、TTL 与取消。超时从上游 context 派生，结束时关闭连接、文件与辅助 goroutine。重试只作用于建连，不自动重放远程命令。
+
+exec 保留 stdout/stderr、退出码和输出截断信息；shell 使用 PTY 合并字节流。持久 terminal 的 open/read/write/resize/signal/status/close 通过本机私有控制接口操作同一会话，read 使用绝对 cursor，报告环形缓冲丢失的字节；关闭后保留最多 1 MiB 输出快照。机器能力从目标端 `capabilities` 查询，不能用本机 schema 的平台信息代替。
 
 ## 文件与平台行为
 
@@ -42,7 +44,7 @@ OS 专有能力放在 `internal/platform` 或对应包的平台文件，通过 b
 
 ## 验证
 
-按改动范围覆盖成功、参数边界、错误与取消路径，检查实际副作用、凭据泄漏和既有文件保护。并发或生命周期变化运行 race；传输参考 `transfer_test.go`，身份与断线行为参考 CLI/access/relay 现有测试。
+按改动范围覆盖成功、参数边界、错误与取消路径，检查实际副作用、凭据泄漏和既有文件保护。并发或生命周期变化运行 race。机器接口参考 `schema_test.go`，参数混排与 exec/PTY 参考 `execution_test.go`；持久终端需覆盖 worker 生命周期、输入串行化和环形缓冲 cursor，会话发现参考 `sessions_test.go`。传输参考 `transfer_test.go`，身份与断线行为参考 CLI/access/relay 现有测试。
 
 从仓库根选择受影响的包运行：
 

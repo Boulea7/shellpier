@@ -3,11 +3,11 @@
 - 用户入口：`README.md`；开发流程：[docs/development.md](docs/development.md)。
 - 协作与安全：[CONTRIBUTING.md](CONTRIBUTING.md)、[SECURITY.md](SECURITY.md)。
 - `cmd/shellpier`：进程入口、取消与退出码。
-- `internal/cli`：命令编排、帮助、输出与会话生命周期。
+- `internal/cli`：命令编排、机器接口、持久终端与会话生命周期。
 - `internal/access`：票据、SSH 客户端与隔离配置。
-- `internal/sshd`：当前用户 SSH exec/SFTP。
+- `internal/sshd`：当前用户 SSH exec、PTY/SFTP。
 - `internal/relay`：WSS 传输、角色配对与撤销。
-- `internal/platform`：权限、进程树与平台差异。
+- `internal/platform`：权限、Unix PTY/Windows ConPTY 与进程树。
 - `internal/netutil`：接口、地址与网络诊断。
 - `legacy`：独立旧 Windows 路线。
 - `scripts`：安装、打包与公开资源校验；`docs`：产品文档。
