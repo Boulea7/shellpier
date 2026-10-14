@@ -29,7 +29,7 @@ func TestReadFileSharesDeleteAccess(t *testing.T) {
 	}
 }
 
-func TestTicketReaderAllowsAtomicReplacement(t *testing.T) {
+func TestTicketReaderAllowsRenameAndPathReuse(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "state.json")
 	if err := os.WriteFile(path, []byte("old"), 0600); err != nil {
@@ -40,11 +40,13 @@ func TestTicketReaderAllowsAtomicReplacement(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer reader.Close()
-	replacement := filepath.Join(dir, "new.json")
-	if err := os.WriteFile(replacement, []byte("new"), 0600); err != nil {
+	// Delete sharing permits renaming an open file to an absent destination.
+	// MoveFileEx replacing an existing open destination has a stricter contract.
+	moved := filepath.Join(dir, "moved.json")
+	if err := os.Rename(path, moved); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Rename(replacement, path); err != nil {
+	if err := os.WriteFile(path, []byte("new"), 0600); err != nil {
 		t.Fatal(err)
 	}
 	old, err := io.ReadAll(reader)
