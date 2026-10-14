@@ -35,6 +35,14 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           ./shellpier-smoke.exe doctor --json
           exit $LASTEXITCODE
+      - if: runner.os == 'Linux'
+        name: Fish completion syntax and candidates
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y fish
+          ./shellpier-smoke completion fish > "$RUNNER_TEMP/shellpier-completion.fish"
+          fish -n "$RUNNER_TEMP/shellpier-completion.fish"
+          fish -c 'source $argv[1]; complete -C "shellpier co" | string match -qr "^connect$"; or exit 1; complete -C "shellpier ke" | string match -qr "^keygen$"; or exit 1; complete -C "shellpier.exe co" | string match -qr "^connect$"; or exit 1; complete -C "shellpier completion po" | string match -qr "^powershell$"; or exit 1' "$RUNNER_TEMP/shellpier-completion.fish"
       - if: runner.os == 'Windows'
         name: Legacy Windows contracts and syntax (modern runner)
         shell: pwsh
@@ -49,6 +57,7 @@ jobs:
             if ($errors.Count) { $errors | Format-List; throw "PowerShell parse failed: $($file.Name)" }
           }
       - run: python scripts/validate_skills.py
+      - run: python scripts/validate_docs.py
   vulnerability:
     runs-on: ubuntu-latest
     steps:
