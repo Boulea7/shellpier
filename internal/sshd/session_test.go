@@ -3,9 +3,15 @@ package sshd
 import (
 	"bytes"
 	"context"
+	"crypto/ed25519"
+	"crypto/rand"
 	"encoding/json"
+	"encoding/pem"
+	"fmt"
 	"io"
+	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -96,9 +102,19 @@ func TestSessionEnvironmentAndWorkingDirectory(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(out), "中文 value") || !strings.Contains(string(out), subdir) {
-		t.Fatalf("env/cwd were not applied: %q", out)
+	lines := strings.Split(strings.TrimSpace(strings.ReplaceAll(string(out), "\r\n", "\n")), "\n")
+	if len(lines) != 2 || lines[0] != "中文 value" {
+		t.Fatal("environment value was not applied exactly")
 	}
+	expected, err := os.Stat(subdir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	actual, err := os.Stat(lines[1])
+	if err != nil || !os.SameFile(expected, actual) {
+		t.Fatal("working directory did not refer to the requested directory")
+	}
+
 }
 func TestSessionBoundedAndPostStartRequests(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
@@ -194,8 +210,11 @@ func TestPTYInteractiveResizeAndSignal(t *testing.T) {
 	if !request(t, s, "window-change", struct{ Columns, Rows, Width, Height uint32 }{100, 30, 0, 0}) {
 		t.Fatal("post-start resize rejected")
 	}
-	if request(t, s, "window-change", struct{ Columns, Rows, Width, Height uint32 }{0, 0, 0, 0}) {
-		t.Fatal("invalid resize accepted")
+	if !request(t, s, "window-change", struct{ Columns, Rows, Width, Height uint32 }{0, 0, 0, 0}) {
+		t.Fatal("zero resize should preserve current dimensions")
+	}
+	if request(t, s, "window-change", struct{ Columns, Rows, Width, Height uint32 }{1001, 0, 0, 0}) {
+		t.Fatal("oversized resize accepted")
 	}
 	command := "printf '__interactive_ok__\\n'; stty size\n"
 	if runtime.GOOS == "windows" {
@@ -344,7 +363,7 @@ func TestPTYRequestPayloadValidation(t *testing.T) {
 		Columns, Rows, Width, Height uint32
 		Modes                        string
 	}{
-		{"xterm", 0, 24, 0, 0, "\x00"}, {"xterm", 80, 1001, 0, 0, "\x00"}, {"bad\nterm", 80, 24, 0, 0, "\x00"}, {"xterm", 80, 24, 0, 0, "\x35\x00"}, {"xterm", 80, 24, 0, 0, "\x00trailing"},
+		{"xterm", 1001, 24, 0, 0, "\x00"}, {"xterm", 80, 1001, 0, 0, "\x00"}, {"bad\nterm", 80, 24, 0, 0, "\x00"}, {"xterm", 80, 24, 0, 0, "\x35\x00"}, {"xterm", 80, 24, 0, 0, "\x00trailing"},
 	} {
 		if request(t, s, "pty-req", value) {
 			t.Fatal("malformed terminal request accepted")
@@ -539,5 +558,131 @@ func TestEnvironmentMergePreservesWindowsDriveEntries(t *testing.T) {
 	}
 	if !entries["=C:=C:\\work"] || !entries["=D:=D:\\other"] || !entries["VAR=new"] || len(values) != 3 {
 		t.Fatal("environment merge lost drive entries or override")
+	}
+}
+
+func TestOpenSSHForcedPTYWithoutLocalTTY(t *testing.T) {
+	if runtime.GOOS == "windows" || !platform.TerminalSupported() {
+		t.Skip("Unix OpenSSH subprocess")
+	}
+	if _, err := os.Stat("/usr/bin/ssh"); err != nil {
+		t.Skip("system OpenSSH unavailable")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+	defer cancel()
+	dir := t.TempDir()
+	host := signer(t)
+	_, private, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	user, err := ssh.NewSignerFromKey(private)
+	if err != nil {
+		t.Fatal(err)
+	}
+	block, err := ssh.MarshalPrivateKey(private, "test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	identity := filepath.Join(dir, "identity")
+	if err = os.WriteFile(identity, pem.EncodeToMemory(block), 0600); err != nil {
+		t.Fatal(err)
+	}
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	_, port, err := net.SplitHostPort(listener.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	known := filepath.Join(dir, "known_hosts")
+	keyLine := fmt.Sprintf("[127.0.0.1]:%s %s", port, ssh.MarshalAuthorizedKey(host.PublicKey()))
+	if err = os.WriteFile(known, []byte(keyLine), 0600); err != nil {
+		t.Fatal(err)
+	}
+	config := filepath.Join(dir, "ssh_config")
+	settings := fmt.Sprintf("Host isolated\n HostName 127.0.0.1\n Port %s\n User shellpier\n IdentityFile %q\n UserKnownHostsFile %q\n GlobalKnownHostsFile /dev/null\n StrictHostKeyChecking yes\n IdentitiesOnly yes\n IdentityAgent none\n BatchMode yes\n PasswordAuthentication no\n KbdInteractiveAuthentication no\n ConnectTimeout 3\n", port, identity, known)
+	if err = os.WriteFile(config, []byte(settings), 0600); err != nil {
+		t.Fatal(err)
+	}
+	serverDone := make(chan error, 1)
+	go func() {
+		conn, err := listener.Accept()
+		if err != nil {
+			serverDone <- err
+			return
+		}
+		serverDone <- (&Server{Signer: host, AuthorizedKey: user.PublicKey(), Shell: "sh", WorkDir: dir}).ServeConn(ctx, conn)
+	}()
+	// os/exec uses pipes, deliberately providing no controlling local terminal.
+	command := exec.CommandContext(ctx, "/usr/bin/ssh", "-F", config, "-tt", "isolated", "stty size; printf '__openssh_pty_ok__\\n'")
+	command.Stdin = strings.NewReader("")
+	command.Env = mergeEnvironment(os.Environ(), []string{"TERM=xterm-256color"})
+	output, err := command.CombinedOutput()
+	if err != nil || !strings.Contains(string(output), "24 80") || !strings.Contains(string(output), "__openssh_pty_ok__") {
+		t.Fatalf("OpenSSH forced PTY from a pipe failed: %v; allocation rejected=%t", err, bytes.Contains(output, []byte("PTY allocation request failed")))
+	}
+	cancel()
+	select {
+	case <-serverDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("OpenSSH test server did not close")
+	}
+}
+
+func TestPTYZeroDimensionProtocol(t *testing.T) {
+	if runtime.GOOS == "windows" || !platform.TerminalSupported() {
+		t.Skip("Unix stty dimension inspection")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	key := signer(t)
+	c, _ := client(t, ctx, key, key.PublicKey(), t.TempDir())
+	s, err := c.NewSession()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	if err = s.RequestPty("xterm", 0, 0, ssh.TerminalModes{}); err != nil {
+		t.Fatal("zero initial dimensions rejected")
+	}
+	if !request(t, s, "window-change", struct{ Columns, Rows, Width, Height uint32 }{120, 0, 0, 0}) {
+		t.Fatal("zero pre-start row rejected")
+	}
+	output := &terminalOutput{}
+	s.Stdout = output
+	s.Stderr = output
+	if err = s.Start("sleep 0.2; stty size"); err != nil {
+		t.Fatal(err)
+	}
+	if !request(t, s, "window-change", struct{ Columns, Rows, Width, Height uint32 }{0, 40, 0, 0}) {
+		t.Fatal("zero post-start column rejected")
+	}
+	if !request(t, s, "window-change", struct{ Columns, Rows, Width, Height uint32 }{0, 0, 0, 0}) {
+		t.Fatal("zero resize rejected")
+	}
+	if err = s.Wait(); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(output.String(), "40 120") {
+		t.Fatal("zero resize did not preserve the existing dimension")
+	}
+}
+func TestPTYZeroDimensionNormalization(t *testing.T) {
+	for _, value := range []struct{ columns, rows, currentColumns, currentRows, wantColumns, wantRows uint32 }{
+		{0, 0, 80, 24, 80, 24}, {0, 30, 80, 24, 80, 30}, {120, 0, 80, 24, 120, 24}, {0, 0, 120, 40, 120, 40},
+	} {
+		columns, rows := terminalDimensions(value.columns, value.rows, value.currentColumns, value.currentRows)
+		if columns != value.wantColumns || rows != value.wantRows {
+			t.Fatal("zero dimension normalization mismatch")
+		}
+		if !validDimensions(value.columns, value.rows) {
+			t.Fatal("valid informational zero dimension rejected")
+		}
+	}
+	if validDimensions(MaxTerminalDimension+1, 0) || validDimensions(0, MaxTerminalDimension+1) {
+		t.Fatal("dimension size limit was lost")
 	}
 }

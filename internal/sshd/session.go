@@ -69,7 +69,7 @@ func (s *Server) session(parent context.Context, ch ssh.Channel, requests <-chan
 			<-finished
 		}
 	}()
-	options := platform.TerminalOptions{Shell: s.Shell, WorkDir: s.WorkDir}
+	options := platform.TerminalOptions{Shell: s.Shell, WorkDir: s.WorkDir, Columns: 80, Rows: 24}
 	environment := map[string]string{}
 	ptyRequested, started := false, false
 	run := func(work func()) {
@@ -134,20 +134,17 @@ func (s *Server) session(parent context.Context, ch ssh.Channel, requests <-chan
 				if !started && !ptyRequested && platform.TerminalSupported() && ssh.Unmarshal(request.Payload, &value) == nil && validTerminal(value.Term, value.Columns, value.Rows) && value.Width <= 100000 && value.Height <= 100000 && validTerminalModes(value.Modes) {
 					ptyRequested = true
 					options.Term = value.Term
-					options.Columns = value.Columns
-					options.Rows = value.Rows
+					options.Columns, options.Rows = terminalDimensions(value.Columns, value.Rows, options.Columns, options.Rows)
 					options.Modes = terminalModes(value.Modes)
 					accepted = true
 				}
 			case "window-change":
 				var value struct{ Columns, Rows, Width, Height uint32 }
 				if ptyRequested && ssh.Unmarshal(request.Payload, &value) == nil && validDimensions(value.Columns, value.Rows) && value.Width <= 100000 && value.Height <= 100000 {
-					if terminal == nil {
-						options.Columns = value.Columns
-						options.Rows = value.Rows
-						accepted = true
-					} else {
-						accepted = terminal.Resize(value.Columns, value.Rows) == nil
+					columns, rows := terminalDimensions(value.Columns, value.Rows, options.Columns, options.Rows)
+					accepted = terminal == nil || columns == options.Columns && rows == options.Rows || terminal.Resize(columns, rows) == nil
+					if accepted {
+						options.Columns, options.Rows = columns, rows
 					}
 				}
 			case "signal":
@@ -241,7 +238,7 @@ func (s *Server) runTerminal(ctx context.Context, ch ssh.Channel, terminal platf
 
 }
 func validDimensions(columns, rows uint32) bool {
-	return columns > 0 && rows > 0 && columns <= MaxTerminalDimension && rows <= MaxTerminalDimension
+	return columns <= MaxTerminalDimension && rows <= MaxTerminalDimension
 }
 func validTerminal(term string, columns, rows uint32) bool {
 	if len(term) == 0 || len(term) > 64 || !validDimensions(columns, rows) {
@@ -347,4 +344,15 @@ func terminalModes(encoded string) map[uint8]uint32 {
 		offset += 4
 	}
 	return values
+}
+
+// RFC 4254 section 6.2 requires zero dimension parameters to be ignored.
+func terminalDimensions(columns, rows, currentColumns, currentRows uint32) (uint32, uint32) {
+	if columns == 0 {
+		columns = currentColumns
+	}
+	if rows == 0 {
+		rows = currentRows
+	}
+	return columns, rows
 }

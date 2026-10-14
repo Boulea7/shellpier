@@ -181,7 +181,7 @@ func TestStdinAndPTY(t *testing.T) {
 		t.Fatal(e)
 	}
 	defer s.Close()
-	if e = s.RequestPty("xterm", 0, 80, ssh.TerminalModes{}); e == nil {
+	if e = s.RequestPty("xterm", 1001, 80, ssh.TerminalModes{}); e == nil {
 		t.Fatal("invalid PTY dimensions accepted")
 	}
 	s.Stdin = strings.NewReader("input中文")
