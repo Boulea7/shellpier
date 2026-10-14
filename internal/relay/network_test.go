@@ -245,3 +245,30 @@ func TestHostReadinessUsesSessionContext(t *testing.T) {
 		t.Fatal("host incorrectly uses client readiness timeout")
 	}
 }
+
+func TestDialTypedHTTPPolicies(t *testing.T) {
+	for _, entry := range []struct {
+		status int
+		want   error
+	}{{429, ErrUnavailable}, {500, ErrUnavailable}, {502, ErrUnavailable}, {503, ErrUnavailable}, {504, ErrUnavailable}, {302, ErrRedirectDenied}, {307, ErrRedirectDenied}, {308, ErrRedirectDenied}, {400, ErrHandshakeRejected}, {426, ErrHandshakeRejected}} {
+		t.Run(fmt.Sprint(entry.status), func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(entry.status) }))
+			defer server.Close()
+			_, err := DialHost(context.Background(), server.URL, Session{ID: "test", HostToken: "host"})
+			if !errors.Is(err, entry.want) {
+				t.Fatalf("expected typed error %v, got %v", entry.want, err)
+			}
+		})
+	}
+}
+func TestInvalidRelayURLTyped(t *testing.T) {
+	for _, address := range []string{"http://example.test", "https://user:password@example.test", "https://example.test?token=secret", "://broken"} {
+		_, err := DialHost(context.Background(), address, Session{ID: "test"})
+		if !errors.Is(err, ErrInvalidURL) {
+			t.Fatalf("invalid URL not typed: %v", err)
+		}
+		if strings.Contains(err.Error(), "password") || strings.Contains(err.Error(), "secret") {
+			t.Fatal("invalid URL credentials exposed")
+		}
+	}
+}

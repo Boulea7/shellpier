@@ -27,6 +27,18 @@ var ErrSessionClosed = errors.New("relay session closed")
 // ErrUnauthorized identifies a rejected role token or access policy.
 var ErrUnauthorized = errors.New("relay unauthorized")
 
+// ErrUnavailable identifies a transient HTTP capacity or upstream failure.
+var ErrUnavailable = errors.New("relay temporarily unavailable")
+
+// ErrInvalidURL identifies a relay address rejected before dialing.
+var ErrInvalidURL = errors.New("invalid relay URL")
+
+// ErrRedirectDenied identifies a redirect rejected to protect credentials.
+var ErrRedirectDenied = errors.New("relay redirect denied")
+
+// ErrHandshakeRejected identifies a nonretryable HTTP upgrade rejection.
+var ErrHandshakeRejected = errors.New("relay WebSocket handshake rejected")
+
 const maxConnections = 8
 const maxMessage = 1 << 20
 
@@ -342,18 +354,18 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 func endpoint(base, path string) (string, error) {
 	u, err := url.Parse(base)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("%w: invalid address syntax", ErrInvalidURL)
 	}
 	if u.User != nil || u.RawQuery != "" || u.Fragment != "" {
-		return "", errors.New("invalid relay URL")
+		return "", fmt.Errorf("%w: userinfo, query and fragment are not allowed", ErrInvalidURL)
 	}
 	host := u.Hostname()
 	ip := net.ParseIP(host)
 	if u.Scheme != "https" && !(u.Scheme == "http" && (host == "localhost" || (ip != nil && ip.IsLoopback()))) {
-		return "", errors.New("relay URL must use HTTPS (HTTP allowed only on loopback)")
+		return "", fmt.Errorf("%w: HTTPS required (HTTP allowed only on loopback)", ErrInvalidURL)
 	}
 	if u.Host == "" {
-		return "", errors.New("relay URL has no host")
+		return "", fmt.Errorf("%w: missing host", ErrInvalidURL)
 	}
 	u.Path = strings.TrimRight(u.Path, "/") + path
 	u.RawPath = ""
@@ -453,6 +465,13 @@ func dialWithReadyTimeout(ctx context.Context, baseURL, role, id, token string, 
 				return nil, fmt.Errorf("%w: WebSocket handshake HTTP %d", ErrSessionClosed, response.StatusCode)
 			case http.StatusUnauthorized, http.StatusForbidden:
 				return nil, fmt.Errorf("%w: WebSocket handshake HTTP %d", ErrUnauthorized, response.StatusCode)
+			case http.StatusTooManyRequests, http.StatusInternalServerError, http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout:
+				return nil, fmt.Errorf("%w: WebSocket handshake HTTP %d", ErrUnavailable, response.StatusCode)
+			default:
+				if response.StatusCode >= 300 && response.StatusCode < 400 {
+					return nil, fmt.Errorf("%w: WebSocket handshake HTTP %d", ErrRedirectDenied, response.StatusCode)
+				}
+				return nil, fmt.Errorf("%w: HTTP %d", ErrHandshakeRejected, response.StatusCode)
 			}
 		}
 		return nil, safeNetworkError{err}
@@ -474,7 +493,7 @@ func dialWithReadyTimeout(ctx context.Context, baseURL, role, id, token string, 
 	}
 	if kind != websocket.MessageText || json.Unmarshal(data, &ready) != nil || !ready.Ready {
 		_ = ws.CloseNow()
-		return nil, errors.New("invalid relay readiness response")
+		return nil, fmt.Errorf("%w: invalid readiness response", ErrHandshakeRejected)
 	}
 	conn := websocket.NetConn(ctx, ws, websocket.MessageBinary)
 	go func() { <-ctx.Done(); _ = ws.CloseNow() }()
