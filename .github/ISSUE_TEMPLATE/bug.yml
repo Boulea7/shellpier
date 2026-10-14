@@ -1,22 +1,75 @@
-name: Bug report
-description: Report a reproducible failure without credentials.
+name: 故障报告
+description: 报告可复现的故障；疑似安全漏洞请使用私密入口。
+title: '[Bug] '
 body:
-  - type: textarea
-    id: environment
+  - type: markdown
     attributes:
-      label: Environment
-      description: CLI version, OS version, CPU architecture, direct or relay mode.
+      value: '疑似漏洞请使用 https://github.com/Boulea7/shellpier/security/advisories/new 。不要上传票据、私钥、access.json、创建密钥或未经脱敏的日志。'
+  - type: input
+    id: cli_version
+    attributes:
+      label: CLI 版本或 commit
+      description: 填写 shellpier version 的版本；Legacy 注明所用 commit。
+    validations:
+      required: true
+  - type: input
+    id: os_version
+    attributes:
+      label: 系统及版本
+      placeholder: Windows 11 / Windows 7 SP1 / macOS 版本 / Linux 发行版与内核
+    validations:
+      required: true
+  - type: input
+    id: architecture
+    attributes:
+      label: 系统与程序架构
+      placeholder: 系统 x64，程序 amd64；或明确不确定
+    validations:
+      required: true
+  - type: dropdown
+    id: connection
+    attributes:
+      label: 连接方式
+      options:
+        - Modern direct
+        - Modern WSS relay / invite
+        - 生成的 OpenSSH / SFTP 配置
+        - Legacy Bitvise direct
+        - Legacy Plink reverse 指南
+        - 安装 / 打包 / 其他
     validations:
       required: true
   - type: textarea
     id: reproduction
     attributes:
-      label: Reproduction and expected behavior
-      description: Redact URLs/identifiers as appropriate; never include keys, tickets or access.json.
+      label: 最小复现步骤
+      description: 使用占位地址和测试账户；说明网络/代理条件与失败步骤，不附有效凭据。
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: 预期行为
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: 实际行为
+      description: 错误、退出码、失败层级；明确是否确认远端命令已执行。
     validations:
       required: true
   - type: textarea
     id: diagnostics
     attributes:
-      label: Redacted diagnostics
-      description: Exit code and doctor output. Security issues belong in the private reporting channel.
+      label: 已脱敏诊断与尝试
+      description: 可附 doctor 的必要片段；移除标识与秘密。没有诊断时说明原因。
+    validations:
+      required: true
+  - type: checkboxes
+    id: privacy
+    attributes:
+      label: 公开提交确认
+      options:
+        - label: 我已移除凭据、访问文件和个人信息；这不是需要私密披露的漏洞报告。
+          required: true

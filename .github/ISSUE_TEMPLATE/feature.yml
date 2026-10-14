@@ -1,13 +1,39 @@
-name: Feature request
-description: Describe a concrete use case.
+name: 功能建议
+description: 描述真实使用场景、所需行为与现有替代方案。
+title: '[Feature] '
 body:
   - type: textarea
     id: usecase
     attributes:
-      label: Use case and desired behavior
+      label: 使用场景与当前问题
+      description: 谁在什么条件下遇到问题？使用泛化环境，不含真实个人标识。
+    validations:
+      required: true
+  - type: textarea
+    id: outcome
+    attributes:
+      label: 希望实现的行为
+      description: 描述可观察的结果和边界，而非仅给出技术方案。
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: 平台与连接条件
+      description: CLI/系统版本、架构、direct/relay/Legacy、代理及权限条件；未知或不适用请说明。
     validations:
       required: true
   - type: textarea
     id: alternatives
     attributes:
-      label: Existing alternatives and compatibility needs
+      label: 已考虑的替代方案
+      description: 现有命令、工具或人工流程能否满足？说明差距。
+    validations:
+      required: true
+  - type: checkboxes
+    id: privacy
+    attributes:
+      label: 公开提交确认
+      options:
+        - label: 我已移除秘密和个人信息，理解建议不构成实现或交付时限承诺。
+          required: true

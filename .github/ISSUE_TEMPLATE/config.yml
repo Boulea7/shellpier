@@ -1,5 +1,8 @@
 blank_issues_enabled: true
 contact_links:
-  - name: Security reporting instructions
-    url: https://github.com/Boulea7/shellpier/blob/main/SECURITY.md
-    about: Read before sharing vulnerability details.
+  - name: 私密报告安全漏洞
+    url: https://github.com/Boulea7/shellpier/security/advisories/new
+    about: 认证、越权、凭据泄漏或撤销失效等问题请私密提交，勿公开利用细节。
+  - name: 使用帮助与排障
+    url: https://github.com/Boulea7/shellpier/blob/main/SUPPORT.md
+    about: 先确认版本与失败层级；项目不提供紧急值守服务。

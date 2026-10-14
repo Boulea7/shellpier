@@ -1,17 +1,25 @@
-# Security policy
+# 安全策略
 
-ShellPier provides temporary command execution as the target's current OS user. Treat access files and tickets as credentials. Protect the relay creation key separately. Do not expose a session to people who should not have that account's privileges.
+ShellPier 提供目标机当前用户权限下的临时命令执行。访问文件、票据和私钥是凭据，中继创建密钥须单独保护。
 
-## Report a vulnerability
+## 私密报告漏洞
 
-Use [GitHub's private vulnerability report](https://github.com/Boulea7/shellpier/security/advisories/new). Private reporting is enabled for this repository. If it is unavailable to you, open a minimal public issue requesting a private contact channel without exploit details or secrets. This project does not claim a dedicated security mailbox or guaranteed response time.
+仓库已启用 [GitHub 私密漏洞报告](https://github.com/Boulea7/shellpier/security/advisories/new)。疑似认证绕过、凭据泄漏、主机公钥验证失败、越权访问或撤销失效，请通过该入口报告，避免在公开 issue/PR 中披露利用细节。
 
-Include affected version/commit, OS, a redacted reproduction and impact. Do not send working access credentials. There is no formal LTS policy; fixes target the current development/release line.
+提供受影响版本或 commit、OS/架构、脱敏复现、预期/实际行为及影响范围。不要附上有效票据、私钥、创建密钥或第三方真实标识；需要示例凭据时使用专门的本地测试环境。
 
-## Security boundaries
+若无法使用私密入口，可开一个不含漏洞细节和个人信息的简短 issue，请求私下联系渠道。本项目没有专用安全邮箱、全天值守或响应时限承诺。当前维护者为 [Boulea7](https://github.com/Boulea7)。
 
-SSH encrypts command/file traffic end to end and verifies the session host key. TLS protects endpoint-to-relay connections. The relay can see connection metadata and can disrupt availability. Access grants are not a sandbox: commands run with the current user's filesystem and account permissions.
+## 支持的版本
 
-Creation keys permit new relay sessions; target/client role tokens have different purposes. TTL and stop revoke tool resources; they do not undo commands already executed or erase OS/network audit logs. Disconnects do not establish whether a command executed, so check effects before retrying.
+项目目前处于 alpha 阶段，安全修复面向当前开发线与最新 alpha 发布。查看 [Releases](https://github.com/Boulea7/shellpier/releases) 确认实际版本；没有 LTS 或旧版本回补保证。升级后仍须检查相应平台和网络条件，不能将修复发布等同于所有 OS 已验收。
 
-Use verified binaries, private credential directories, short TTLs and approved networks. Verify `hostname`/`whoami` before meaningful work. Never turn off host-key verification to make a connection work. Retest a fresh connection after stopping or expiry.
+## 安全边界
+
+- SSH 对命令/文件流量端到端加密并固定会话主机公钥；TLS 保护端点到中继的连接。中继仍可观察连接元数据并中断服务。
+- 访问权限不是沙箱：命令继承当前用户的账户与文件系统权限，不通过 PAM 切换系统用户。工作目录不限制文件访问范围。
+- 创建密钥、host token 和 client token 用途不同，不应互换或公开。
+- TTL/stop 撤销本工具资源，不回滚已执行命令，不删除系统/网络审计。连接丢失不能证明命令未执行，重试前检查副作用。
+- 正常退出的资源管理不能等同于 SIGKILL、断电或恶意进程隔离；Unix 子进程可逃离受管理进程组。Legacy 到期受 Task Scheduler、供电与时钟影响。详见[兼容性边界](docs/compatibility.md)。
+
+只在获准系统和网络中使用。使用可信发行包、私有凭据目录与短 TTL；先验证目标身份，结束后实际尝试新连接证明拒绝。不要关闭 TLS 或 host-key 验证来解决连接问题。普通使用故障见 [SUPPORT](SUPPORT.md)。

@@ -1,14 +1,14 @@
-## Problem and resulting behavior
+## 问题与修改后的行为
 
-Describe the concrete trigger and outcome.
+描述触发条件、问题和具体结果；关联 issue（如有）。
 
-## Validation
+## 验证
 
-List checks actually run and their results; note platform gaps.
+列出实际运行的命令/检查及结果；说明失败、未执行项目和平台缺口。按改动选择最小充分验证，见 CONTRIBUTING.md。
 
-## Security and compatibility
+## 安全与兼容性
 
-Explain changes to access, authentication, TTL, revocation, OS support or public CLI, if any.
+说明权限、认证、TTL/撤销、平台支持、公开 CLI 或新增依赖的影响；无影响时写明。
 
-- [ ] No private keys, tickets, access files or unrelated internal documents are included.
-- [ ] Public documentation matches the implemented behavior.
+- [ ] 已检查 diff，没有凭据、访问文件、真实个人标识、无关改动或内部协作文档。
+- [ ] 公开文档与实现一致，没有把编译、mock 或配置存在写成实机验收。
