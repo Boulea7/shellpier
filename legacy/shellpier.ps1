@@ -17,9 +17,7 @@ param(
     [string]$RelayHostKey,
     [string]$RelayPrivateKey,
     [int]$RelayPort = 443,
-    [int]$RemotePort = 2222,
-    [string]$PlinkSha256 = 'c7be84cc42565ad4de7e77e99f0a61f3a8dec17c77d5ff1afad79d005af54c93',
-    [string]$PlinkPublisher = 'Simon Tatham'
+    [int]$RemotePort = 2222
 )
 $ErrorActionPreference = 'Stop'
 $scriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
@@ -27,6 +25,9 @@ $scriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 . (Join-Path $scriptRoot 'bitvise.ps1')
 $root = Join-Path $env:ProgramData 'ShellPierLegacy'
 $installerHash = 'd1407f989d18f4505bf623eb1c33a68cd5c79a483214ebc1ff86bee9821293a6'
+# Only the reviewed official PuTTY 0.85 w32 binary is supported.
+$plinkHash = 'c7be84cc42565ad4de7e77e99f0a61f3a8dec17c77d5ff1afad79d005af54c93'
+$plinkPublisher = 'Simon Tatham'
 function Write-State($State, [string]$Path) {
     $tmp = $Path + '.new'
     $State | Export-Clixml -Path $tmp
@@ -82,8 +83,7 @@ try {
     if ($Command -eq 'help') {
         Write-Host 'ShellPier legacy: doctor | prepare | start | status -Session ID | stop -Session ID'
         Write-Host 'start -Installer FILE -PublicKey FILE -AllowedClient IPv4 -AcceptLicense -AllowInstall [-Port 2222] [-TtlMinutes 180]'
-        Write-Host 'prepare -Mode reverse -Plink FILE -RelayHost HOST -RelayUser USER -RelayHostKey FINGERPRINT -RelayPrivateKey FILE -PlinkSha256 SHA256'
-        Write-Host 'No downloads, default-instance changes, automatic reboot or system-log deletion.'
+        Write-Host 'prepare -Mode reverse -Plink FILE -RelayHost HOST -RelayUser USER -RelayHostKey FINGERPRINT -RelayPrivateKey FILE (PuTTY 0.85 w32)'
     } elseif ($Command -eq 'doctor') {
         $report = Get-ShellPierDoctor
         $report | Select-Object OS,OSVersion,ServicePack,Architecture,PowerShell,CLR,Elevated,Proxy | Format-List
@@ -102,8 +102,8 @@ try {
     } elseif ($Command -eq 'prepare') {
         Assert-ShellPierPort $Port
         if ($Mode -eq 'direct') {
-            Write-Host '1. Obtain the official Bitvise SSH Server 9.66 installer offline. SHA256:' $installerHash
-            Write-Host '2. Review the vendor EULA and choose a license valid for this use. No license is bundled or assumed.'
+            Write-Host '1. Obtain the official Bitvise SSH Server 9.66 installer offline.'
+            Write-Host '2. Read the vendor license and choose the license for your use.'
             Write-Host '3. Put one OpenSSH public key beside this CLI; keep the private key on the connecting machine.'
             Write-Host '4. From elevated CMD, run the start command shown by help. It creates a fresh named service and durable TTL task.'
             Write-Host '5. Verify the displayed SSH host key using the vendor control panel, then remotely run hostname and whoami.'
@@ -113,10 +113,10 @@ try {
             if ($RelayHost -notmatch '^[a-zA-Z0-9][a-zA-Z0-9.-]*$' -or $RelayUser -notmatch '^[a-zA-Z0-9_][a-zA-Z0-9_.-]*$') { throw 'Valid relay host and user are required.' }
             if ($RelayHostKey -notmatch '^SHA256:[a-zA-Z0-9+/]+={0,2}$') { throw 'A trusted relay SHA256 host key fingerprint is required; never auto-accept it.' }
             if (-not (Test-Path -LiteralPath $RelayPrivateKey -PathType Leaf)) { throw 'PuTTY .ppk key file is required; no password argument is generated.' }
-            Assert-ShellPierBinary $Plink $PlinkSha256 $PlinkPublisher
+            Assert-ShellPierBinary $Plink $plinkHash $plinkPublisher
             foreach ($path in @($Plink,$RelayPrivateKey)) { if ($path -match '[\r\n"%&|<>^!]') { throw 'Unsupported CMD metacharacter in path.' } }
             $line = '"' + $Plink + '" -ssh -batch -noagent -noshare -N -P ' + $RelayPort + ' -l ' + $RelayUser + ' -hostkey "' + $RelayHostKey + '" -i "' + $RelayPrivateKey + '" -R 127.0.0.1:' + $RemotePort + ':127.0.0.1:' + $Port + ' ' + $RelayHost
-            Write-Host '[GUIDE_ONLY] Verified local plink bytes/publisher. No connection started:'
+            Write-Host 'Run this command to open the tunnel:'
             Write-Host $line
             Write-Host 'Requires a local SSH server, relay permission for loopback reverse forwarding, and independent relay host-key verification.'
             Write-Host 'The local server sees the forwarded connection from 127.0.0.1; use a loopback listener/source policy, not the external client IPv4.'
