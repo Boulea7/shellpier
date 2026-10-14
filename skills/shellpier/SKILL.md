@@ -13,7 +13,9 @@ Use a team-provided relay URL/key or an explicitly authorized self-hosted relay.
 
 For existing access, prefer `@access.json` to putting tokens on the command line. For new access use `share`, or `invite` and send only the target's host ticket through an authorized private channel. Do not send messages solely because this skill is active. Keep controller private keys, access files and tickets out of transcripts, Git and logs.
 
-Generate an isolated directory with `ssh-config`; retain strict host-key pinning and the generated identity/known-hosts paths. Verify `hostname` and `whoami` with the built-in client or generated OpenSSH configuration before consequential commands. If identity differs from expectation, stop. Execute only the user's authorized work; the endpoint runs as the current OS user and is not a sandbox.
+Use `inspect @access.json --json` for an offline summary; it can describe an expired ticket but cannot extend access. Run `check @access.json --json` to verify SSH, hostname and account before consequential commands. If identity differs from expectation, stop. For OpenSSH, generate an isolated directory with `ssh-config` and retain its pinned host key. Execute only the user's authorized work; the endpoint runs as the current OS user and is not a sandbox.
+
+Use `upload` or `download` for an authorized single-file transfer. Confirm source and destination, use `--timeout` when needed, and preserve the default refusal to overwrite. An interrupted upload may leave a remote partial file; inspect it before retrying or removing anything. `keygen --out NEW-DIRECTORY` creates a separate key pair without installing it on any host.
 
 A lost connection may follow a successfully executed command. Inspect effects before retrying, and never automatically replay old commands. Keep the foreground host running only for the agreed TTL; `--keep-awake` is opt-in.
 
