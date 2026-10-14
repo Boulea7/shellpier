@@ -3,6 +3,7 @@ package access
 import (
 	"context"
 	"net"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -26,7 +27,12 @@ func serveTestSSH(t *testing.T, host Ticket) string {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(func() { cancel(); ln.Close() })
-	server := &sshd.Server{Signer: signer, AuthorizedKey: pub, Shell: "auto", WorkDir: t.TempDir()}
+	// This fixture tests SSH routing and authentication, not PowerShell startup.
+	shell := "sh"
+	if runtime.GOOS == "windows" {
+		shell = "cmd"
+	}
+	server := &sshd.Server{Signer: signer, AuthorizedKey: pub, Shell: shell, WorkDir: t.TempDir()}
 	go func() {
 		for {
 			c, e := ln.Accept()
@@ -51,7 +57,7 @@ func TestDialPinAuthenticationAndFallback(t *testing.T) {
 	wrongAddr := serveTestSSH(t, wrong)
 	rightAddr := serveTestSSH(t, h)
 	a.Addresses = []string{wrongAddr, rightAddr}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	client, e := Dial(ctx, a, "")
 	if e != nil {
@@ -64,20 +70,30 @@ func TestDialPinAuthenticationAndFallback(t *testing.T) {
 	out, e := session.CombinedOutput("echo access-ok")
 	session.Close()
 	if e != nil || strings.TrimSpace(string(out)) != "access-ok" {
-		t.Fatalf("exec failed: %v", e)
+		t.Fatalf("exec failed: %v (context: %v)", e, ctx.Err())
 	}
 	client.Close()
 	a.Addresses = []string{wrongAddr}
-	if c, e := Dial(ctx, a, ""); e == nil {
+	rejectionCtx, rejectionCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer rejectionCancel()
+	if c, e := Dial(rejectionCtx, a, ""); e == nil {
 		c.Close()
 		t.Fatal("host key mismatch accepted")
+	}
+	if rejectionCtx.Err() != nil {
+		t.Fatal("host key rejection was masked by a test deadline")
 	}
 	a.Addresses = []string{rightAddr}
 	other, _, _ := NewPair(time.Minute)
 	a.PrivateKey = other.PrivateKey
-	if c, e := Dial(ctx, a, ""); e == nil {
+	authCtx, authCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer authCancel()
+	if c, e := Dial(authCtx, a, ""); e == nil {
 		c.Close()
 		t.Fatal("unauthorized client accepted")
+	}
+	if authCtx.Err() != nil {
+		t.Fatal("authentication rejection was masked by a test deadline")
 	}
 }
 func TestDialCancellationClosesClient(t *testing.T) {

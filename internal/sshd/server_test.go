@@ -1,12 +1,14 @@
 package sshd
 
 import (
+	"bufio"
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"github.com/pkg/sftp"
 	"golang.org/x/crypto/ssh"
 	"io"
@@ -17,6 +19,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 	"unicode/utf16"
@@ -195,7 +198,7 @@ func TestSessionCloseStopsCommand(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("Unix marker command")
 	}
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	key := signer(t)
 	dir := t.TempDir()
@@ -204,14 +207,69 @@ func TestSessionCloseStopsCommand(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	if e = s.Start("sleep 1; touch escaped"); e != nil {
+	stdout, e := s.StdoutPipe()
+	if e != nil {
 		t.Fatal(e)
 	}
-	time.Sleep(100 * time.Millisecond)
-	s.Close()
-	time.Sleep(1100 * time.Millisecond)
+	// Read both PIDs only after the shell has started its managed child. The gate
+	// prevents a delayed test goroutine from letting the command finish early.
+	if e = s.Start("sleep 120 & child=$!; printf '%s %s\\n' \"$$\" \"$child\"; while [ ! -e gate ]; do sleep 0.01; done; touch escaped; kill \"$child\"; wait \"$child\""); e != nil {
+		t.Fatal(e)
+	}
+	ready, e := bufio.NewReader(stdout).ReadString('\n')
+	if e != nil {
+		t.Fatal("command did not announce its process")
+	}
+
+	pids := strings.Fields(ready)
+	if len(pids) != 2 {
+		t.Fatal("command did not announce shell and child")
+	}
+	processes := make([]*os.Process, 0, 2)
+	for _, value := range pids {
+		pid, err := strconv.Atoi(value)
+		if err != nil || pid <= 0 {
+			t.Fatal("invalid command process identifier")
+		}
+		process, err := os.FindProcess(pid)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer process.Release()
+		processes = append(processes, process)
+	}
+	if e = s.Close(); e != nil {
+		t.Fatal(e)
+	}
+	deadline := time.Now().Add(time.Second)
+	for _, process := range processes {
+		for {
+			e = process.Signal(syscall.Signal(0))
+			if errors.Is(e, os.ErrProcessDone) || errors.Is(e, syscall.ESRCH) {
+				break
+			}
+			if e != nil {
+				t.Fatalf("cannot check owned command process: %v", e)
+			}
+			// A killed orphan can remain as a zombie until its new parent
+			// reaps it; signal 0 alone does not distinguish this on Linux.
+			if runtime.GOOS == "linux" {
+				if data, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", process.Pid)); err == nil && terminatedProcStat(data) {
+					break
+				}
+			}
+
+			if time.Now().After(deadline) {
+				t.Fatal("closed session shell or managed child did not terminate")
+			}
+			time.Sleep(5 * time.Millisecond)
+		}
+	}
+	if e = os.WriteFile(filepath.Join(dir, "gate"), nil, 0600); e != nil {
+		t.Fatal(e)
+	}
 	if _, e = os.Stat(filepath.Join(dir, "escaped")); !os.IsNotExist(e) {
-		t.Fatalf("closed session process survived: %v", e)
+		t.Fatal("closed session command ran after the gate was released")
 	}
 	// The same transport remains usable after stopping the closed channel's process.
 	s, e = c.NewSession()
@@ -373,5 +431,24 @@ func TestWindowsTTLStopsJobChild(t *testing.T) {
 	}
 	if _, e := os.Stat(escaped); !os.IsNotExist(e) {
 		t.Fatal("Windows job child survived cancellation")
+	}
+}
+
+func terminatedProcStat(data []byte) bool {
+	end := strings.LastIndexByte(string(data), ')')
+	if end < 0 {
+		return false
+	}
+	fields := strings.Fields(string(data[end+1:]))
+	return len(fields) > 0 && (fields[0] == "Z" || fields[0] == "X")
+}
+func TestTerminatedProcStat(t *testing.T) {
+	for _, value := range []struct {
+		text  string
+		ended bool
+	}{{"123 (sleep) Z 1 123", true}, {"123 (sleep) X 1 123", true}, {"123 (sleep ) and spaces) Z 1 123", true}, {"123 (sleep) S 1 123", false}, {"123 (sleep) R 1 123", false}, {"malformed", false}} {
+		if terminatedProcStat([]byte(value.text)) != value.ended {
+			t.Fatal("proc state did not distinguish a terminated process")
+		}
 	}
 }
