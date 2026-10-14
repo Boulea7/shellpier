@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -108,7 +109,7 @@ func outputCommand() string {
 }
 func assertExecSFTP(t *testing.T, ticket access.Ticket, dir string) {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	c, e := access.Dial(ctx, ticket, "")
 	if e != nil {
@@ -129,8 +130,16 @@ func assertExecSFTP(t *testing.T, ticket access.Ticket, dir string) {
 		t.Fatal(e)
 	}
 	defer sf.Close()
-	path := filepath.ToSlash(filepath.Join(dir, "传输.txt"))
-	f, e := sf.Create(path)
+	cwd, e := sf.Getwd()
+	if e != nil {
+		t.Fatal(e)
+	}
+	name := path.Join(cwd, "传输.txt")
+	if runtime.GOOS == "windows" && !strings.HasPrefix(name, "/") {
+		name = "/" + name
+	}
+	// Relative creation and protocol-absolute read must address the same host file.
+	f, e := sf.Create("传输.txt")
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -139,7 +148,7 @@ func assertExecSFTP(t *testing.T, ticket access.Ticket, dir string) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	f, e = sf.Open(path)
+	f, e = sf.Open(name)
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -147,6 +156,9 @@ func assertExecSFTP(t *testing.T, ticket access.Ticket, dir string) {
 	f.Close()
 	if e != nil || string(data) != "私有传输" {
 		t.Fatal("SFTP roundtrip mismatch")
+	}
+	if actual, e := os.ReadFile(filepath.Join(dir, "传输.txt")); e != nil || string(actual) != "私有传输" {
+		t.Fatal("relative and protocol-absolute SFTP paths did not resolve to the configured work directory")
 	}
 }
 
@@ -159,7 +171,12 @@ func TestDirectShareTTL(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	assertExecSFTP(t, ticket, dir)
+	// TTL coverage should not depend on cold shell startup performance.
+	c, e := access.Dial(context.Background(), ticket, "")
+	if e != nil {
+		t.Fatal("short-lived SSH handshake failed")
+	}
+	c.Close()
 	var status struct {
 		Status string `json:"status"`
 	}
@@ -181,7 +198,12 @@ func TestDirectStopAndConfigCleanup(t *testing.T) {
 	t.Setenv("SHELLPIER_RELAY_URL", "")
 	dir := t.TempDir()
 	path := filepath.Join(dir, "ticket.json")
-	state, done := startHost(t, "share", "--listen", "127.0.0.1:0", "--ttl", "0", "--output", path, "--json")
+	state, done := startHost(t, "share", "--listen", "127.0.0.1:0", "--ttl", "0", "--output", path, "--json", "--work-dir", dir)
+	ticket, e := access.Read("@" + path)
+	if e != nil {
+		t.Fatal(e)
+	}
+	assertExecSFTP(t, ticket, dir)
 	invoke(t, "status", "--state", state)
 	configDir := filepath.Join(dir, "generated")
 	invoke(t, "ssh-config", "@"+path, "--out", configDir)

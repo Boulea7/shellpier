@@ -4,17 +4,22 @@ import (
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
+	"encoding/base64"
+	"encoding/binary"
 	"errors"
 	"github.com/pkg/sftp"
 	"golang.org/x/crypto/ssh"
 	"io"
 	"net"
 	"os"
+	"path"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf16"
 )
 
 func signer(t *testing.T) ssh.Signer {
@@ -81,8 +86,15 @@ func TestExecAndSFTP(t *testing.T) {
 		t.Fatal(e)
 	}
 	defer sf.Close()
-	name := filepath.ToSlash(filepath.Join(dir, "中文.txt"))
-	f, e := sf.Create(name)
+	cwd, e := sf.Getwd()
+	if e != nil {
+		t.Fatal(e)
+	}
+	name := path.Join(cwd, "中文.txt")
+	if runtime.GOOS == "windows" && !strings.HasPrefix(name, "/") {
+		name = "/" + name
+	}
+	f, e := sf.Create("中文.txt")
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -98,6 +110,9 @@ func TestExecAndSFTP(t *testing.T) {
 	f.Close()
 	if e != nil || string(data) != "上传下载" {
 		t.Fatalf("download %q %v", data, e)
+	}
+	if actual, e := os.ReadFile(filepath.Join(dir, "中文.txt")); e != nil || string(actual) != "上传下载" {
+		t.Fatal("SFTP paths did not resolve to the configured work directory")
 	}
 }
 func TestRejectKey(t *testing.T) {
@@ -281,5 +296,78 @@ func TestHandshakeDeadlineCleared(t *testing.T) {
 	out, e := s.Output("sleep 0.35; printf alive")
 	if e != nil || string(out) != "alive" {
 		t.Fatalf("authenticated session still has handshake deadline: %q %v", out, e)
+	}
+}
+
+func TestWindowsTTLStopsJobChild(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("Windows job-object integration")
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	key := signer(t)
+	dir := t.TempDir()
+	c, done := client(t, ctx, key, key.PublicKey(), dir)
+	session, e := c.NewSession()
+	if e != nil {
+		t.Fatal(e)
+	}
+	defer session.Close()
+	quote := func(value string) string { return "'" + strings.ReplaceAll(value, "'", "''") + "'" }
+	ready := filepath.Join(dir, "child-ready")
+	escaped := filepath.Join(dir, "escaped")
+	pidFile := filepath.Join(dir, "child.pid")
+	childCommand := "[System.IO.File]::WriteAllText(" + quote(ready) + ", 'ready'); Start-Sleep -Seconds 4; [System.IO.File]::WriteAllText(" + quote(escaped) + ", 'escaped')"
+	words := utf16.Encode([]rune(childCommand))
+	raw := make([]byte, len(words)*2)
+	for i, w := range words {
+		binary.LittleEndian.PutUint16(raw[i*2:], w)
+	}
+	encoded := base64.StdEncoding.EncodeToString(raw)
+	command := "$child = Start-Process -FilePath powershell.exe -NoNewWindow -PassThru -ArgumentList '-NoProfile','-NonInteractive','-EncodedCommand'," + quote(encoded) + "; Set-Content -LiteralPath " + quote(pidFile) + " -Value $child.Id -Encoding ASCII; Wait-Process -Id $child.Id"
+	if e = session.Start(command); e != nil {
+		t.Fatal("could not start managed Windows child")
+	}
+	deadline := time.Now().Add(12 * time.Second)
+	var child *os.Process
+	for {
+		if child == nil {
+			if data, e := os.ReadFile(pidFile); e == nil {
+				pid, e := strconv.Atoi(strings.TrimSpace(string(data)))
+				if e != nil {
+					t.Fatal("invalid child PID")
+				}
+				child, e = os.FindProcess(pid)
+				if e != nil {
+					t.Fatal(e)
+				}
+				defer child.Release()
+				defer child.Kill()
+			}
+		}
+		if _, e := os.Stat(ready); e == nil && child != nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("Windows child did not become ready")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	// Hold the child process handle so cleanup targets this process even if its PID is reused.
+	childDone := make(chan struct{})
+	go func() { child.Wait(); close(childDone) }()
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(4 * time.Second):
+		t.Fatal("Windows SSH server did not stop")
+	}
+	select {
+	case <-childDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("job close did not terminate the spawned child")
+	}
+	if _, e := os.Stat(escaped); !os.IsNotExist(e) {
+		t.Fatal("Windows job child survived cancellation")
 	}
 }

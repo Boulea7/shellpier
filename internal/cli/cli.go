@@ -136,22 +136,29 @@ func displayArg(value string) string {
 	return "'" + strings.ReplaceAll(value, "'", "'\\''") + "'"
 }
 
-func writePrivate(path string, contents []byte) error {
+func writePrivate(path string, contents []byte) (result error) {
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
 	if err != nil {
 		return err
 	}
-	if err = platform.SecureFile(path); err != nil {
+	created, err := f.Stat()
+	if err != nil {
 		f.Close()
-		os.Remove(path)
+		return err
+	}
+	defer func() {
+		result = errors.Join(result, f.Close())
+		if result != nil {
+			if current, err := os.Lstat(path); err == nil && os.SameFile(created, current) {
+				result = errors.Join(result, os.Remove(path))
+			}
+		}
+	}()
+	if err = platform.SecureFile(path); err != nil {
 		return err
 	}
 	_, err = f.Write(contents)
-	closeErr := f.Close()
-	if err != nil {
-		return err
-	}
-	return closeErr
+	return err
 }
 
 func writeJSONPrivate(path string, value any) error {

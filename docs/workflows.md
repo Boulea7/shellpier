@@ -61,6 +61,8 @@ Use the native executable on supported modern Windows. PowerShell quotes paths; 
 
 Use `--shell cmd` only when the intended commands are CMD syntax. Built-in connect joins arguments into a remote shell command, so escaping follows the **target** shell. Prefer small, explicit commands before complex quoting or transferring a reviewed script with SFTP. Do not assume Unix `hostname`/`whoami` command syntax extends to every command on Windows.
 
+SFTP paths use forward slashes, including on Windows. Prefer paths relative to the session's working directory, such as `put local.txt remote.txt`. For an absolute Windows path, use `/C:/Users/you/remote.txt` with the leading slash. `C:\Users\you\remote.txt` is a local Windows path, not an SFTP protocol path. Quote paths containing spaces in the SFTP client.
+
 `--keep-awake` is opt-in and fails visibly when the OS mechanism is unavailable; it does not guarantee connectivity through lock, logout, reboot, lid policy or power loss. Default operation does not modify autostart, firewall rules, global routes or system SSH services. For Windows 7/8, use the [independent legacy guide](legacy-windows.md).
 
 ## TTL, stop and persistence
