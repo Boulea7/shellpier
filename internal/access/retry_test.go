@@ -11,7 +11,6 @@ import (
 	"net/http/httptest"
 	"strings"
 	"sync/atomic"
-	"syscall"
 	"testing"
 	"time"
 
@@ -29,7 +28,7 @@ func TestRetryTransientRecoveryAndLimit(t *testing.T) {
 	got, err := retryDial(context.Background(), options, func() (*ssh.Client, error) {
 		calls++
 		if calls < 3 {
-			return nil, fmt.Errorf("dial: %w", syscall.ECONNREFUSED)
+			return nil, fmt.Errorf("dial: %w", io.ErrUnexpectedEOF)
 		}
 		return expected, nil
 	})

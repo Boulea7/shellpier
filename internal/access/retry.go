@@ -6,7 +6,6 @@ import (
 	"io"
 	"math/rand/v2"
 	"net"
-	"syscall"
 	"time"
 
 	"github.com/Boulea7/shellpier/internal/relay"
@@ -118,7 +117,7 @@ func retryableConnection(err error) bool {
 	if errors.As(err, &dns) {
 		return !dns.IsNotFound && (dns.IsTimeout || dns.IsTemporary)
 	}
-	if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, syscall.ECONNREFUSED) || errors.Is(err, syscall.ECONNRESET) || errors.Is(err, syscall.ECONNABORTED) || errors.Is(err, syscall.ENETRESET) || errors.Is(err, syscall.ETIMEDOUT) || errors.Is(err, syscall.ENETUNREACH) || errors.Is(err, syscall.EHOSTUNREACH) || errors.Is(err, syscall.EPIPE) {
+	if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) || retryablePlatformConnection(err) {
 		return true
 	}
 	var network net.Error
