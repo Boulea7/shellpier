@@ -128,6 +128,10 @@ compdef _shellpier_complete shellpier shellpier.exe
 				}
 			}
 			for _, spec := range completionSpecs() {
+				// Fish disables -l candidates after any raw -- token, even a value.
+				// Plain arguments remain available; our lexer gates this fallback.
+				fallback := "__shellpier_context key \"" + spec.Name + "\"; and __shellpier_context dash-value"
+				lines = append(lines, "complete -c "+executable+" -n '"+fallback+"' -a '"+completionFlagWords(spec)+"'")
 				for _, flag := range spec.Flags {
 					condition := "__shellpier_context key \"" + spec.Name + "\""
 					line := "complete -c " + executable + " -n '" + condition + "' -l " + flag.Name
@@ -324,8 +328,12 @@ func completionFishContext() string {
     set -l action ''
     set -l key ''
     set -l value_pending 0
+    set -l literal_dash_value 0
     for arg in $tokens[2..-1]
         if test "$value_pending" = 1
+            if test "$arg" = --
+                set literal_dash_value 1
+            end
             set value_pending 0
             continue
         end
@@ -363,6 +371,8 @@ func completionFishContext() string {
             test "$key" = "$argv[2]"
         case action
             test "$command_name" = "$argv[2]"; and test -z "$action"
+        case dash-value
+            test "$literal_dash_value" = 1; and string match -q -- '-*' (commandline -ct)
         case active
             return 0
         case '*'
