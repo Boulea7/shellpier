@@ -4,7 +4,7 @@ ShellPier provides temporary command execution as the target's current OS user. 
 
 ## Report a vulnerability
 
-Use this repository's **Security → Report a vulnerability** private reporting feature if enabled. If unavailable, contact [Boulea7](https://github.com/Boulea7) through an available private GitHub contact channel, or open a minimal public issue requesting one without exploit details or secrets. This project does not claim a dedicated security mailbox or guaranteed response time.
+Use [GitHub's private vulnerability report](https://github.com/Boulea7/shellpier/security/advisories/new). Private reporting is enabled for this repository. If it is unavailable to you, open a minimal public issue requesting a private contact channel without exploit details or secrets. This project does not claim a dedicated security mailbox or guaranteed response time.
 
 Include affected version/commit, OS, a redacted reproduction and impact. Do not send working access credentials. There is no formal LTS policy; fixes target the current development/release line.
 

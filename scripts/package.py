@@ -31,9 +31,9 @@ for system, arch in targets:
                 z.write(root/'scripts/START.cmd','START.cmd')
             elif system == 'darwin':
                 z.write(root/'scripts/start.command','start.command')
-            for name in ['LICENSE','README.md','README.zh-CN.md','CONTRIBUTING.md','SECURITY.md','CODE_OF_CONDUCT.md','CHANGELOG.md']:
+            for name in ['LICENSE','README.md','README.zh-CN.md','CONTRIBUTING.md','SECURITY.md','CODE_OF_CONDUCT.md','CHANGELOG.md','THIRD_PARTY_NOTICES.md','go.mod','go.sum']:
                 z.write(root/name,name)
-            for directory in ['skills','legacy','scripts','docs']:
+            for directory in ['skills','legacy','scripts','docs','deploy']:
                 path = root/directory
                 if path.exists():
                     for file in sorted(path.rglob('*')):

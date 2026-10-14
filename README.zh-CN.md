@@ -5,7 +5,7 @@
 
 让 Agent 临时连到另一台电脑：当前用户权限、SSH 端到端加密、会话自动过期。
 
-[下载](https://github.com/Boulea7/shellpier/releases) · [English](README.md) · [使用场景](docs/workflows.md) · [命令说明](docs/commands.md) · [部署中继](docs/relay.md) · [排障](docs/troubleshooting.md) · [下载与离线安装](docs/install.md)
+[下载](https://github.com/Boulea7/shellpier/releases) · [English](README.md) · [使用场景](docs/workflows.md) · [命令说明](docs/commands.md) · [部署中继](docs/relay.md) · [排障](docs/troubleshooting.md) · [下载与离线安装](docs/install.md) · [兼容性](docs/compatibility.md) · [方案调研](docs/research.md)
 
 目标机主动向中继建立 WebSocket，控制端通过同一中继访问内置 SSH。无需管理员权限，也无需安装系统 SSH 服务。默认在前台运行，不添加开机启动；支持执行命令和 SFTP，不提供 PTY 或桌面控制。
 

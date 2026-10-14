@@ -5,7 +5,7 @@
 
 Temporary SSH access for agents, across machines and networks.
 
-[Download](https://github.com/Boulea7/shellpier/releases) · [中文指南](README.zh-CN.md) · [Workflows](docs/workflows.md) · [Deployment](docs/relay.md) · [Troubleshooting](docs/troubleshooting.md) · [Install / offline](docs/install.md) · [Security](SECURITY.md)
+[Download](https://github.com/Boulea7/shellpier/releases) · [中文指南](README.zh-CN.md) · [Workflows](docs/workflows.md) · [Deployment](docs/relay.md) · [Troubleshooting](docs/troubleshooting.md) · [Install / offline](docs/install.md) · [Compatibility](docs/compatibility.md) · [Research](docs/research.md) · [Security](SECURITY.md)
 
 ShellPier runs an SSH endpoint as the current user and connects it outward to a relay over WebSocket. It needs no system SSH server or administrator account. Sessions expire; stopping the host revokes the session. It runs in the foreground by default and does not install an autostart service.
 
