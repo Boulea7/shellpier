@@ -1,0 +1,22 @@
+name: Bug report
+description: Report a reproducible failure without credentials.
+body:
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: CLI version, OS version, CPU architecture, direct or relay mode.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction and expected behavior
+      description: Redact URLs/identifiers as appropriate; never include keys, tickets or access.json.
+    validations:
+      required: true
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Redacted diagnostics
+      description: Exit code and doctor output. Security issues belong in the private reporting channel.

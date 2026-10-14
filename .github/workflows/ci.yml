@@ -1,0 +1,59 @@
+name: CI
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-go@v7.0.0
+        with:
+          go-version: 'stable'
+          check-latest: true
+          cache: true
+      - uses: actions/setup-python@v7.0.0
+        with:
+          python-version: '3.x'
+      - run: go vet ./...
+      - run: go test -race -timeout 5m ./...
+      - run: go test -count=10 -timeout 10m ./...
+      - run: go build -o shellpier-smoke${{ runner.os == 'Windows' && '.exe' || '' }} ./cmd/shellpier
+      - if: runner.os != 'Windows'
+        run: ./shellpier-smoke version && ./shellpier-smoke doctor --json
+      - if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          ./shellpier-smoke.exe version
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          ./shellpier-smoke.exe doctor --json
+          exit $LASTEXITCODE
+      - if: runner.os == 'Windows'
+        name: Legacy Windows contracts and syntax (modern runner)
+        shell: pwsh
+        run: |
+          ./legacy/tests/core-contract.ps1
+          ./legacy/tests/bitvise-contract.ps1
+          $files = Get-ChildItem -LiteralPath legacy -Recurse -Filter *.ps1
+          foreach ($file in $files) {
+            $tokens = $null
+            $errors = $null
+            [System.Management.Automation.Language.Parser]::ParseFile($file.FullName, [ref]$tokens, [ref]$errors) | Out-Null
+            if ($errors.Count) { $errors | Format-List; throw "PowerShell parse failed: $($file.Name)" }
+          }
+      - run: python scripts/validate_skills.py
+  vulnerability:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-go@v7.0.0
+        with:
+          go-version: 'stable'
+          check-latest: true
+      - run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...

@@ -1,0 +1,53 @@
+name: Release archives
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Archive version label
+        required: true
+permissions:
+  contents: read
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-go@v7.0.0
+        with:
+          go-version: 'stable'
+          check-latest: true
+          cache: true
+      - uses: actions/setup-python@v7.0.0
+        with:
+          python-version: '3.x'
+      - run: go test ./...
+      - run: python scripts/validate_skills.py
+      - name: Build offline archives
+        env:
+          RELEASE_VERSION: ${{ inputs.version || github.ref_name }}
+        run: python scripts/package.py --version "$RELEASE_VERSION"
+      - uses: actions/upload-artifact@v7.0.2
+        with:
+          name: shellpier-release
+          path: dist/*
+          if-no-files-found: error
+  publish:
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: package
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/download-artifact@v8.0.2
+        with:
+          name: shellpier-release
+          path: dist
+      - name: Create draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          gh release create "$RELEASE_TAG" dist/* --verify-tag --draft --prerelease --title "ShellPier $RELEASE_TAG" --notes-file CHANGELOG.md

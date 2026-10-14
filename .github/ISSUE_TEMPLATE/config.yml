@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Security reporting instructions
+    url: https://github.com/Boulea7/shellpier/blob/main/SECURITY.md
+    about: Read before sharing vulnerability details.

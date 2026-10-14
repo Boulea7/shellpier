@@ -1,0 +1,17 @@
+/dist/
+/shellpier
+/shellpier.exe
+*.test
+*.prof
+coverage.out
+access.json
+host.ticket
+session.state
+session-ssh/
+invitation/
+*.key
+.env
+.DS_Store
+
+__pycache__/
+*.pyc
