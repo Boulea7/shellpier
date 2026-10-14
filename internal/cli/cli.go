@@ -12,7 +12,7 @@ import (
 const help = `ShellPier — SSH access to your own machines.
 
 Target computer:
-  shellpier share [--relay URL] [--ttl 1h] [--keep-awake]
+  shellpier share [--relay URL] [--ttl 3h] [--keep-awake]
   shellpier host <host-ticket or @file> [--keep-awake]
 
 Your AI Agent's computer:
@@ -36,7 +36,7 @@ Lifecycle and diagnostics:
   shellpier completion bash|zsh|fish|powershell
   shellpier version [--json]
 
-Default: foreground, one-hour lifetime, current user's permissions.
+Default: foreground, three-hour lifetime, current user's permissions.
 Direct mode needs peer reachability; campus/hotspot NAT usually needs a relay.
 Relay creation needs SHELLPIER_RELAY_KEY or --token-file. No public relay is bundled.
 Use --ttl 0 for an explicitly persistent session (relay operator must also allow it).

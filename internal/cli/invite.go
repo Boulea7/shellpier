@@ -17,13 +17,13 @@ func invite(ctx context.Context, args []string, stdout, stderr io.Writer) error 
 	f := flags("invite", stderr)
 	base := f.String("relay", os.Getenv("SHELLPIER_RELAY_URL"), "HTTPS relay URL")
 	keyFile := f.String("token-file", "", "relay enrollment key file")
-	ttl := f.Duration("ttl", time.Hour, "authorization lifetime; 0 means explicitly persistent")
+	ttl := f.Duration("ttl", defaultSessionTTL, "authorization lifetime; 0 means explicitly persistent")
 	dir := f.String("out", "", "new private output directory")
 	if err := f.Parse(args); err != nil {
 		return err
 	}
 	if f.NArg() != 0 || *base == "" || *dir == "" || *ttl < 0 || *ttl > 0 && *ttl < time.Second {
-		return errors.New("usage: shellpier invite --relay URL --out NEW-DIRECTORY [--ttl 1h]")
+		return errors.New("usage: shellpier invite --relay URL --out NEW-DIRECTORY [--ttl 3h]")
 	}
 	key, err := tokenKey(*keyFile)
 	if err != nil {

@@ -25,21 +25,25 @@ import (
 )
 
 type hostOptions struct {
-	awake   bool
-	shell   string
-	workdir string
-	output  string
-	json    bool
+	awake        bool
+	shell        string
+	workdir      string
+	output       string
+	json         bool
+	reconnectMin time.Duration
+	reconnectMax time.Duration
 }
 
 func share(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	f := flags("share", stderr)
 	base := f.String("relay", os.Getenv("SHELLPIER_RELAY_URL"), "HTTPS relay URL; unset uses direct mode")
 	keyFile := f.String("token-file", "", "relay enrollment key file")
-	ttl := f.Duration("ttl", time.Hour, "authorization lifetime; 0 means explicitly persistent")
+	ttl := f.Duration("ttl", defaultSessionTTL, "authorization lifetime; 0 means explicitly persistent")
 	listen := f.String("listen", "0.0.0.0:0", "direct SSH listen address; ignored in relay mode")
 	iface := f.String("interface", "", "advertise addresses on this interface; --listen controls binding")
 	o := hostOptions{}
+	f.DurationVar(&o.reconnectMin, "reconnect-min", defaultReconnectMin, "minimum relay reconnect delay")
+	f.DurationVar(&o.reconnectMax, "reconnect-max", defaultReconnectMax, "maximum relay reconnect delay")
 	f.BoolVar(&o.awake, "keep-awake", false, "temporarily inhibit automatic system sleep")
 	f.StringVar(&o.shell, "shell", "auto", "auto, powershell, cmd, or sh")
 	f.StringVar(&o.workdir, "work-dir", "", "remote command starting directory")
@@ -95,6 +99,8 @@ func host(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	input, args := ticketArgument(args)
 	f := flags("host", stderr)
 	o := hostOptions{}
+	f.DurationVar(&o.reconnectMin, "reconnect-min", defaultReconnectMin, "minimum relay reconnect delay")
+	f.DurationVar(&o.reconnectMax, "reconnect-max", defaultReconnectMax, "maximum relay reconnect delay")
 	f.BoolVar(&o.awake, "keep-awake", false, "temporarily inhibit automatic system sleep")
 	f.StringVar(&o.shell, "shell", "auto", "auto, powershell, cmd, or sh")
 	f.StringVar(&o.workdir, "work-dir", "", "remote command starting directory")
@@ -124,6 +130,9 @@ func host(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 }
 
 func validateHostOptions(o hostOptions) error {
+	if o.reconnectMin <= 0 || o.reconnectMax < o.reconnectMin || o.reconnectMax > 24*time.Hour {
+		return errors.New("reconnect-min must be positive; reconnect-max must be at least reconnect-min and at most 24h")
+	}
 	if _, err := platform.Command(o.shell, "", o.workdir); err != nil {
 		return err
 	}
@@ -323,42 +332,33 @@ func serveHost(parent context.Context, h access.Ticket, a *access.Ticket, listen
 		}
 	} else {
 		var lastNotice atomic.Int64
+		var failureOnce sync.Once
 		for i := 0; i < 4; i++ {
 			workers.Add(1)
 			go func() {
 				defer workers.Done()
-				backoff := time.Second
-				for ctx.Err() == nil {
-					conn, err := relay.DialHost(ctx, h.RelayURL, ticketSession(h))
-					if err != nil {
-						if ctx.Err() != nil {
-							return
-						}
-						if errors.Is(err, relay.ErrSessionClosed) || errors.Is(err, relay.ErrUnauthorized) {
-							cancel()
-							return
-						}
+				err := reconnectHost(ctx, o.reconnectMin, o.reconnectMax,
+					func(ctx context.Context) (net.Conn, error) { return relay.DialHost(ctx, h.RelayURL, ticketSession(h)) },
+					func(ctx context.Context, conn net.Conn) {
+						active.Add(1)
+						defer active.Add(-1)
+						server.ServeConn(ctx, conn)
+					},
+					func() {
 						now := time.Now().Unix()
 						previous := lastNotice.Load()
 						if now-previous >= 30 && lastNotice.CompareAndSwap(previous, now) {
 							fmt.Fprintln(stderr, "Relay unavailable; reconnecting within this session's lifetime. Interrupted commands are not replayed.")
 						}
-						timer := time.NewTimer(backoff)
-						select {
-						case <-ctx.Done():
-							timer.Stop()
-							return
-						case <-timer.C:
+					},
+				)
+				if permanentRelayError(err) {
+					failureOnce.Do(func() {
+						if !errors.Is(err, relay.ErrSessionClosed) {
+							serveErr = err
 						}
-						if backoff < 16*time.Second {
-							backoff *= 2
-						}
-						continue
-					}
-					backoff = time.Second
-					active.Add(1)
-					server.ServeConn(ctx, conn)
-					active.Add(-1)
+						cancel()
+					})
 				}
 			}()
 		}
