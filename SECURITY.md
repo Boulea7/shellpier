@@ -1,5 +1,7 @@
 # 安全策略
 
+简体中文 · [English](SECURITY.en.md)
+
 ShellPier 提供目标机当前用户权限下的临时命令执行。访问文件、票据和私钥是凭据，中继创建密钥须单独保护。
 
 ## 私密报告漏洞
@@ -8,11 +10,9 @@ ShellPier 提供目标机当前用户权限下的临时命令执行。访问文�
 
 提供受影响版本或 commit、OS/架构、脱敏复现、预期/实际行为及影响范围。不要附上有效票据、私钥、创建密钥或第三方真实标识；需要示例凭据时使用专门的本地测试环境。
 
-若无法使用私密入口，可开一个不含漏洞细节和个人信息的简短 issue，请求私下联系渠道。本项目没有专用安全邮箱、全天值守或响应时限承诺。当前维护者为 [Boulea7](https://github.com/Boulea7)。
-
 ## 支持的版本
 
-项目目前处于 alpha 阶段，安全修复面向当前开发线与最新 alpha 发布。查看 [Releases](https://github.com/Boulea7/shellpier/releases) 确认实际版本；没有 LTS 或旧版本回补保证。升级后仍须检查相应平台和网络条件，不能将修复发布等同于所有 OS 已验收。
+安全修复面向当前开发线与[最新 alpha 版本](https://github.com/Boulea7/shellpier/releases)。支持平台见[兼容性说明](docs/compatibility.md)。
 
 ## 安全边界
 
@@ -20,6 +20,6 @@ ShellPier 提供目标机当前用户权限下的临时命令执行。访问文�
 - 访问权限不是沙箱：命令继承当前用户的账户与文件系统权限，不通过 PAM 切换系统用户。工作目录不限制文件访问范围。
 - 创建密钥、host token 和 client token 用途不同，不应互换或公开。
 - TTL/stop 撤销本工具资源，不回滚已执行命令，不删除系统/网络审计。连接丢失不能证明命令未执行，重试前检查副作用。
-- 正常退出的资源管理不能等同于 SIGKILL、断电或恶意进程隔离；Unix 子进程可逃离受管理进程组。Legacy 到期受 Task Scheduler、供电与时钟影响。详见[兼容性边界](docs/compatibility.md)。
+- 崩溃、SIGKILL 或断电可能留下状态和凭据；Unix 子进程可逃离受管理进程组。Legacy 到期受 Task Scheduler、供电与时钟影响。详见[兼容性边界](docs/compatibility.md)。
 
-只在获准系统和网络中使用。使用可信发行包、私有凭据目录与短 TTL；先验证目标身份，结束后实际尝试新连接证明拒绝。不要关闭 TLS 或 host-key 验证来解决连接问题。普通使用故障见 [SUPPORT](SUPPORT.md)。
+普通使用故障见[获取帮助](SUPPORT.md)。
