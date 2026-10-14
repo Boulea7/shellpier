@@ -68,6 +68,16 @@ jobs:
             assert_candidate "shellpier ke" keygen
             assert_candidate "shellpier.exe co" connect
             assert_candidate "shellpier completion po" powershell
+            assert_candidate "shellpier --json te" terminal
+            assert_candidate "shellpier --json terminal wr" write
+            assert_candidate "shellpier --json terminal write --te" --text
+            assert_candidate "shellpier files read --off" --offset
+            assert_candidate "shellpier terminal write --text read --sta" --state
+            assert_candidate "shellpier exec --command -- --cw" --cwd
+            if contains -- --command (complete -C "shellpier exec ticket -- --co")
+              echo "Local options leaked into a remote command" >&2
+              exit 1
+            end
           ' "$RUNNER_TEMP/shellpier-completion.fish"
       - if: runner.os == 'Windows'
         name: Legacy Windows contracts and syntax (modern runner)
