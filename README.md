@@ -1,99 +1,98 @@
-# ShellPier
+<p align="center">
+  <img src="assets/banner.png" alt="ShellPier：连接两端终端的栈桥" width="960">
+</p>
 
-[![CI](https://github.com/Boulea7/shellpier/actions/workflows/ci.yml/badge.svg)](https://github.com/Boulea7/shellpier/actions/workflows/ci.yml)
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+<p align="center"><strong>让自己的 AI Agent，临时连上另一台电脑。</strong></p>
 
-Temporary SSH access for agents, across machines and networks.
+<p align="center">
+  简体中文 · <a href="README.en.md">English</a>
+</p>
 
-[Download](https://github.com/Boulea7/shellpier/releases) · [中文指南](README.zh-CN.md) · [Workflows](docs/workflows.md) · [Deployment](docs/relay.md) · [Troubleshooting](docs/troubleshooting.md) · [Install / offline](docs/install.md) · [Compatibility](docs/compatibility.md) · [Research](docs/research.md) · [Security](SECURITY.md)
+<p align="center">
+  <a href="https://github.com/Boulea7/shellpier/releases"><img src="https://img.shields.io/github/v/release/Boulea7/shellpier?include_prereleases&amp;label=preview" alt="预览版本"></a>
+  <a href="https://github.com/Boulea7/shellpier/actions/workflows/ci.yml"><img src="https://github.com/Boulea7/shellpier/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="go.mod"><img src="https://img.shields.io/badge/Go-1.26%2B-00ADD8?logo=go&amp;logoColor=white" alt="Go 1.26+"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/Boulea7/shellpier" alt="MIT 许可证"></a>
+</p>
 
-ShellPier runs an SSH endpoint as the current user and connects it outward to a relay over WebSocket. It needs no system SSH server or administrator account. Sessions expire; stopping the host revokes the session. It runs in the foreground by default and does not install an autostart service.
+<p align="center">
+  <a href="https://github.com/Boulea7/shellpier/releases">下载</a> ·
+  <a href="docs/README.md">文档</a> ·
+  <a href="docs/commands.md">命令</a> ·
+  <a href="CONTRIBUTING.md">参与贡献</a> ·
+  <a href="SUPPORT.md">获取帮助</a>
+</p>
 
-```mermaid
-flowchart LR
-    A[Agent / SSH client] -->|WSS :443| R[Your relay]
-    H[Target: current user] -->|WSS :443| R
-    A -. SSH encryption + pinned host key .-> H
-```
+ShellPier 把当前用户的命令执行和文件传输交给临时 SSH 会话。现代版解压即用，无需安装系统 SSH 服务；可在局域网直连，也可通过自建 WSS 中继连接校园网、手机热点后的电脑。
 
-| Your machine | Start here |
+- **连接有期限**：默认一小时，自定义 TTL，支持主动撤销和持续运行。
+- **控制端少配置**：自动识别目标用户与地址，生成固定主机公钥的 SSH 配置。
+- **常用动作独立**：查看票据、检查身份、上传下载、生成密钥，均可单独调用。
+- **适合 Agent**：提供 JSON 输出、内置 SSH 客户端和 [Agent skill](skills/shellpier/SKILL.md)。
+
+## 下载
+
+| 系统 | 选择 |
 |---|---|
-| Windows 10/11 | Extract native archive; PowerShell `.\shellpier.exe`, CMD `shellpier.exe` |
-| Windows 7/8 | [Separate legacy PowerShell/Bitvise entrypoint](docs/legacy-windows.md) |
-| macOS / Linux | Extract native archive; `./shellpier` |
+| Windows 10 / 11 | `windows_amd64`、`windows_386` 或 `windows_arm64` |
+| Linux | `linux_amd64` 或 `linux_arm64` |
+| macOS 13+ | `darwin_amd64` 或 `darwin_arm64` |
+| Windows 7 / 8 | 包内 [Legacy 独立入口](docs/legacy-windows.md)；新流程仍需旧系统实机验收 |
 
-## Get connected
+从 [Releases](https://github.com/Boulea7/shellpier/releases) 下载 ZIP，校验 `checksums.txt` 后解压。详见[安装与离线传递](docs/install.md)。当前为预览版。
 
-You need a relay URL and creation key from your team or your own relay. **No public free relay is bundled.** See [the relay guide](docs/relay.md). Download an archive from this repository's Releases, check its SHA-256 against `checksums.txt`, and extract it. The archive contains the executable, legacy Windows entrypoint, skill, and license.
+## 先跑通一次
 
-The examples below assume `shellpier` is on PATH. Otherwise use the executable paths in the table above. On the target:
-
-```sh
-shellpier doctor --relay https://relay.example.com
-shellpier share --relay https://relay.example.com --ttl 1h --output access.json
-```
-
-Set `SHELLPIER_RELAY_KEY` privately, or supply `--token-file /private/path/relay.key`. `SHELLPIER_RELAY_URL` can provide the default relay URL. Transfer `access.json` privately to the controller. It contains a temporary private key and must not enter chat transcripts, Git, or build logs.
-
-Windows PowerShell, from the extracted directory (quote `@file` arguments):
+在同一台 Windows 电脑开两个 **PowerShell** 窗口；这次演练只监听本机，无需中继。
 
 ```powershell
-.\shellpier.exe doctor --relay https://relay.example.com
-.\shellpier.exe share --relay https://relay.example.com --ttl 1h --output access.json
-# On the controller after privately transferring the file:
-.\shellpier.exe connect '@access.json' -- hostname
+# 窗口 A：保持运行，Ctrl+C 结束
+.\shellpier.exe share --relay= --listen 127.0.0.1:0 --ttl 30m --output access.json
+```
+
+```powershell
+# 窗口 B：核验主机和账户，再执行命令
+.\shellpier.exe check '@access.json'
 .\shellpier.exe connect '@access.json' -- whoami
-.\shellpier.exe ssh-config '@access.json' --out .\session-ssh
-# For an invitation target:
+```
+
+macOS / Linux 将 `.\shellpier.exe` 换成 `./shellpier`。`access.json` 是私密凭据；会话结束后删除本次生成的文件。
+
+## 连到另一台电脑
+
+双方可直连时，按[局域网示例](docs/workflows.md)操作。跨校园网、NAT 或手机热点时，先取得自己或团队的中继 URL 与创建密钥，再从控制端邀请目标机：
+
+```powershell
+# 控制端：私钥留在本机，只把 host.ticket 私下交给目标机
+.\shellpier.exe invite --relay https://relay.example.com --token-file .\relay.key --ttl 1h --out .\invitation
+
+# 目标机
 .\shellpier.exe host '@host.ticket'
+
+# 控制端
+.\shellpier.exe check '@invitation/access.json'
 ```
 
-CMD uses `shellpier.exe connect @access.json -- whoami` from the extracted directory. The modern installer requires PowerShell 5.1+; the legacy package is a separate entrypoint and does not depend on Invoke-WebRequest.
+中继需要[自行部署](docs/relay.md)，没有预置公共服务。目标机不需要手输 Windows 用户名或 IP。
 
-On the controller:
+## 几个常用动作
 
-```sh
-shellpier connect @access.json -- hostname
-shellpier connect @access.json -- whoami
-shellpier ssh-config @access.json --out ./session-ssh
+```powershell
+.\shellpier.exe inspect '@access.json' --json
+.\shellpier.exe upload '@access.json' .\report.txt report.txt
+.\shellpier.exe download '@access.json' result.txt .\result.txt
+.\shellpier.exe ssh-config '@access.json' --out .\session-ssh
+.\shellpier.exe keygen --out .\agent-key
 ```
 
-The generated SSH configuration pins the session host key and uses an isolated identity and known-hosts file. Use `ssh -F ./session-ssh/ssh_config shellpier hostname` or `sftp -F ./session-ssh/ssh_config shellpier`; keep the entire directory private. Built-in `connect` works without OpenSSH.
+上传、下载默认不覆盖文件。还支持 `--keep-awake`、持续会话、四种终端补全和远程撤销，见[命令手册](docs/commands.md)。
 
-For a controller-created invitation:
+## 文档与贡献
 
-```sh
-shellpier invite --relay https://relay.example.com --ttl 1h --out ./invitation
-# Send only host.ticket to the target, then run there:
-shellpier host @host.ticket
-# Keep access.json and the generated private-key files on the controller.
-shellpier connect @invitation/access.json -- hostname
-```
+[使用场景](docs/workflows.md) · [排障](docs/troubleshooting.md) · [常见问题](docs/faq.md) · [兼容性](docs/compatibility.md) · [方案调研](docs/research.md)
 
-Stop the foreground process with Ctrl+C, or use `shellpier stop --state <printed-state.json-path>`. Inspect `shellpier status --state <printed-state.json-path>` before stop; runtime state is removed when the session closes. For an invitation, `shellpier revoke @invitation/host.ticket` also revokes remotely. Verify a fresh connection fails after stopping or expiry, then run `shellpier cleanup --dir ./invitation` (or `./session-ssh`) to remove generated credentials. Cleanup preserves unrelated files and does not itself revoke access. Existing commands are never replayed automatically after a disconnect.
+欢迎修复问题、补充平台验收和改进文档。从 [CONTRIBUTING](CONTRIBUTING.md) 开始；[开发指南](docs/development.md)说明目录职责、如何增加命令与相应测试。[路线图](docs/roadmap.md)列出当前能力和待完善项。
 
-## Choose your path
+现代版以当前用户权限运行，支持命令执行和 SFTP；暂不提供交互终端或桌面控制。清理仅处理本工具资源，不删除系统审计，也不回滚已执行命令。详见[安全策略](SECURITY.md)。
 
-| Environment | Path | Boundary |
-|---|---|---|
-| Windows 10/11, Linux, macOS | Native executable | Current-user command execution and SFTP; no PTY or desktop control |
-| Windows 7/8 | [Legacy Windows package](docs/legacy-windows.md) | Separate PowerShell/Bitvise workflow; modern Go executable is not supported here |
-| Agent with an SSH tool | `ssh-config` + `proxy` | Requires an OpenSSH-compatible client |
-| Restricted network | HTTPS/WSS relay on 443 | Normal portal login and network authorization still apply |
-
-Use `--keep-awake` only when desired; availability depends on the OS. Direct listening with `--listen 0.0.0.0:0` needs an allowed inbound route and exposes a temporary endpoint. Prefer the relay for outbound-only networks.
-
-## Develop
-
-Go 1.26 or newer is required by current dependencies.
-
-```sh
-go test ./...
-go test -race ./...
-go build ./cmd/shellpier
-python3 scripts/validate_skills.py
-```
-
-CI is configured for Linux, macOS and Windows tests, race checks, repeated tests, build smoke tests, vulnerability checks, and skill validation. Configuration alone is not a claim that hosted jobs have passed. See [CONTRIBUTING](CONTRIBUTING.md) and [the command reference](docs/commands.md).
-
-MIT © Boulea7. Use only on systems you are authorized to access.
+MIT © [Boulea7](https://github.com/Boulea7)
