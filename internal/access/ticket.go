@@ -297,7 +297,7 @@ func ReadFile(path string, limit int64) ([]byte, error) {
 	if limit < 0 || limit == int64(^uint64(0)>>1) {
 		return nil, errors.New("invalid file size limit")
 	}
-	info, err := os.Lstat(path)
+	info, err := statTicket(path)
 	if err != nil {
 		return nil, fmt.Errorf("read file: %w", err)
 	}
