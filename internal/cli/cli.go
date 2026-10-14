@@ -23,6 +23,8 @@ Your AI Agent's computer:
 
 Lifecycle and diagnostics:
   shellpier doctor [--relay URL] [--json]
+  shellpier inspect <ticket or @file> [--json]
+  shellpier check <access-ticket or @file> [--timeout 20s] [--json]
   shellpier status --state FILE
   shellpier stop --state FILE
   shellpier cleanup --dir GENERATED-SSH-CONFIG-DIRECTORY
@@ -67,6 +69,10 @@ func Run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 		return sshConfig(args[1:], stdout, stderr)
 	case "doctor":
 		return doctor(ctx, args[1:], stdout, stderr)
+	case "inspect":
+		return inspect(args[1:], stdout, stderr)
+	case "check":
+		return check(ctx, args[1:], stdout, stderr)
 	case "status", "stop":
 		return control(ctx, args[0], args[1:], stdout, stderr)
 	case "revoke":
