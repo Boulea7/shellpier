@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -14,6 +15,7 @@ import (
 
 func runRelay(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	f := flags("relay", stderr)
+	machine := f.Bool("json", false, "emit relay metadata as JSON")
 	listen := f.String("listen", "127.0.0.1:8080", "HTTP listener behind an HTTPS reverse proxy")
 	keyFile := f.String("token-file", "", "relay enrollment key file")
 	initKey := f.String("init-key", "", "create a new private relay key file and exit")
@@ -22,7 +24,7 @@ func runRelay(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 	persistent := f.Bool("allow-persistent", false, "explicitly permit sessions with TTL 0")
 	cert := f.String("tls-cert", "", "PEM certificate for native HTTPS")
 	key := f.String("tls-key", "", "PEM private key for native HTTPS")
-	if err := f.Parse(args); err != nil {
+	if err := parseFlags(f, args); err != nil {
 		return err
 	}
 	if f.NArg() != 0 {
@@ -35,6 +37,9 @@ func runRelay(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 		}
 		if err := writePrivate(*initKey, []byte(value+"\n")); err != nil {
 			return err
+		}
+		if *machine {
+			return json.NewEncoder(stdout).Encode(map[string]any{"event": "relay_key_created", "path": *initKey})
 		}
 		fmt.Fprintln(stdout, "Created relay key file:", *initKey)
 		return nil
@@ -65,8 +70,15 @@ func runRelay(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 			done <- httpServer.Serve(listener)
 		}
 	}()
-	fmt.Fprintln(stdout, "Relay listening:", listener.Addr())
-	if *cert == "" {
+	if *machine {
+		if err := json.NewEncoder(stdout).Encode(map[string]any{"event": "relay_ready", "timestamp": time.Now().UTC(), "address": listener.Addr().String(), "tls": *cert != "", "max_sessions": *maxSessions, "max_ttl": maxTTL.String(), "allow_persistent": *persistent}); err != nil {
+			httpServer.Close()
+			return err
+		}
+	} else {
+		fmt.Fprintln(stdout, "Relay listening:", listener.Addr())
+	}
+	if *cert == "" && !*machine {
 		fmt.Fprintln(stdout, "Use an HTTPS reverse proxy before exposing this HTTP listener.")
 	}
 	select {

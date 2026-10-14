@@ -9,7 +9,6 @@ import (
 	"io"
 	"net"
 	"net/http"
-	"net/url"
 	"os"
 	"path/filepath"
 	"sync"
@@ -49,7 +48,7 @@ func share(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	f.StringVar(&o.workdir, "work-dir", "", "remote command starting directory")
 	f.StringVar(&o.output, "output", "", "write an access ticket to this new private file")
 	f.BoolVar(&o.json, "json", false, "emit session metadata as JSON")
-	if err := f.Parse(args); err != nil {
+	if err := parseFlags(f, args); err != nil {
 		return err
 	}
 	if f.NArg() != 0 || *ttl < 0 || *ttl > 0 && *ttl < time.Second {
@@ -105,7 +104,7 @@ func host(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	f.StringVar(&o.shell, "shell", "auto", "auto, powershell, cmd, or sh")
 	f.StringVar(&o.workdir, "work-dir", "", "remote command starting directory")
 	f.BoolVar(&o.json, "json", false, "emit session metadata as JSON")
-	if err := f.Parse(args); err != nil {
+	if err := parseFlags(f, args); err != nil {
 		return err
 	}
 	if input == "" && f.NArg() == 1 {
@@ -155,6 +154,7 @@ type localState struct {
 	ControlURL string    `json:"control_url"`
 	Secret     string    `json:"secret"`
 	ExpiresAt  time.Time `json:"expires_at"`
+	Transport  string    `json:"transport,omitempty"`
 }
 
 func serveHost(parent context.Context, h access.Ticket, a *access.Ticket, listener net.Listener, o hostOptions, stdout, stderr io.Writer) (result error) {
@@ -218,7 +218,14 @@ func serveHost(parent context.Context, h access.Ticket, a *access.Ticket, listen
 		return err
 	}
 	state := localState{Version: 1, Kind: "shellpier-host", ID: h.ID, ControlURL: "http://" + controlListener.Addr().String(), Secret: controlSecret, ExpiresAt: h.ExpiresAt}
+	if h.RelayURL != "" {
+		state.Transport = "relay"
+	} else {
+		state.Transport = "direct"
+	}
 	var active atomic.Int64
+	var reconnecting atomic.Bool
+	var relayReady atomic.Bool
 	controlServer := &http.Server{ReadHeaderTimeout: 3 * time.Second, IdleTimeout: 5 * time.Second, MaxHeaderBytes: 4096, Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if subtle.ConstantTimeCompare([]byte(r.Header.Get("Authorization")), []byte("Bearer "+state.Secret)) != 1 {
 			http.Error(w, "unauthorized", 401)
@@ -227,7 +234,7 @@ func serveHost(parent context.Context, h access.Ticket, a *access.Ticket, listen
 		w.Header().Set("Cache-Control", "no-store")
 		if r.URL.Path == "/status" && r.Method == http.MethodGet {
 			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(map[string]any{"id": h.ID, "expires_at": h.ExpiresAt, "active_ssh_connections": active.Load(), "status": "running"})
+			json.NewEncoder(w).Encode(map[string]any{"id": h.ID, "expires_at": h.ExpiresAt, "active_ssh_connections": active.Load(), "status": "running", "transport": state.Transport, "relay_connection_state": relayConnectionState(state.Transport, active.Load(), reconnecting.Load())})
 			return
 		}
 		if r.URL.Path == "/stop" && r.Method == http.MethodPost {
@@ -300,6 +307,24 @@ func serveHost(parent context.Context, h access.Ticket, a *access.Ticket, listen
 			fmt.Fprintln(stdout, "Waiting for outbound relay pairing; verify with a real SSH command.")
 		}
 	}
+	var eventMu sync.Mutex
+	var eventErr error
+	emit := func(event, reason string) {
+		if !o.json {
+			return
+		}
+		eventMu.Lock()
+		defer eventMu.Unlock()
+		if eventErr == nil {
+			eventErr = json.NewEncoder(stdout).Encode(map[string]any{"event": event, "id": h.ID, "timestamp": time.Now().UTC(), "reason": reason, "transport": state.Transport})
+			if eventErr != nil {
+				cancel()
+			}
+		}
+	}
+	if listener != nil {
+		emit("ready", "listening")
+	}
 	var workers sync.WaitGroup
 	var serveErr error
 	if listener != nil {
@@ -341,6 +366,9 @@ func serveHost(parent context.Context, h access.Ticket, a *access.Ticket, listen
 					func(ctx context.Context) (net.Conn, error) { return relay.DialHost(ctx, h.RelayURL, ticketSession(h)) },
 					func(ctx context.Context, conn net.Conn) {
 						active.Add(1)
+						if relayReady.CompareAndSwap(false, true) || reconnecting.Swap(false) {
+							emit("ready", "relay_connected")
+						}
 						defer active.Add(-1)
 						server.ServeConn(ctx, conn)
 					},
@@ -348,7 +376,12 @@ func serveHost(parent context.Context, h access.Ticket, a *access.Ticket, listen
 						now := time.Now().Unix()
 						previous := lastNotice.Load()
 						if now-previous >= 30 && lastNotice.CompareAndSwap(previous, now) {
-							fmt.Fprintln(stderr, "Relay unavailable; reconnecting within this session's lifetime. Interrupted commands are not replayed.")
+							reconnecting.Store(true)
+							if o.json {
+								emit("reconnecting", "relay_unavailable")
+							} else {
+								fmt.Fprintln(stderr, "Relay unavailable; reconnecting within this session's lifetime. Interrupted commands are not replayed.")
+							}
 						}
 					},
 				)
@@ -367,33 +400,32 @@ func serveHost(parent context.Context, h access.Ticket, a *access.Ticket, listen
 	cancel()
 	workers.Wait()
 	if o.json {
-		json.NewEncoder(stdout).Encode(map[string]string{"event": "session_closed", "id": h.ID})
+		reason := "stopped"
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			reason = "expired"
+		} else if serveErr != nil {
+			reason = "connection_failed"
+		}
+		emit("closed", reason)
 	} else {
 		fmt.Fprintln(stdout, "Session closed. Access revoked; managed SSH commands stopped.")
 	}
-	return serveErr
+	return errors.Join(serveErr, eventErr)
 }
 
 func control(ctx context.Context, mode string, args []string, stdout, stderr io.Writer) error {
 	f := flags(mode, stderr)
 	path := f.String("state", "", "state.json path printed by share or host")
-	if err := f.Parse(args); err != nil {
+	machine := f.Bool("json", false, "emit command metadata as JSON")
+	if err := parseFlags(f, args); err != nil {
 		return err
 	}
 	if *path == "" || f.NArg() != 0 {
 		return errors.New("provide --state FILE")
 	}
-	b, err := readRegular(*path, 8192)
+	state, err := readLocalState(*path)
 	if err != nil {
 		return err
-	}
-	var state localState
-	if json.Unmarshal(b, &state) != nil || state.Version != 1 || state.Kind != "shellpier-host" || len(state.Secret) != 64 {
-		return errors.New("invalid ShellPier state file")
-	}
-	u, err := url.Parse(state.ControlURL)
-	if err != nil || u.Scheme != "http" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || u.Path != "" || !net.ParseIP(u.Hostname()).IsLoopback() {
-		return errors.New("invalid local control address")
 	}
 	c, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
@@ -426,8 +458,11 @@ func control(ctx context.Context, mode string, args []string, stdout, stderr io.
 	defer tick.Stop()
 	for {
 		if _, err := os.Lstat(*path); errors.Is(err, os.ErrNotExist) {
-			fmt.Fprintln(stdout, "Session stopped; local runtime files removed.")
-			return nil
+			if *machine {
+				return json.NewEncoder(stdout).Encode(map[string]any{"event": "stopped", "id": state.ID, "state_path": *path})
+			}
+			_, err := fmt.Fprintln(stdout, "Session stopped; local runtime files removed.")
+			return err
 		}
 		select {
 		case <-ctx.Done():
@@ -442,7 +477,8 @@ func control(ctx context.Context, mode string, args []string, stdout, stderr io.
 func cleanup(args []string, stdout, stderr io.Writer) error {
 	f := flags("cleanup", stderr)
 	dir := f.String("dir", "", "directory created by ssh-config or invite")
-	if err := f.Parse(args); err != nil {
+	machine := f.Bool("json", false, "emit command metadata as JSON")
+	if err := parseFlags(f, args); err != nil {
 		return err
 	}
 	if *dir == "" || f.NArg() != 0 {
@@ -516,8 +552,26 @@ func cleanup(args []string, stdout, stderr io.Writer) error {
 			return err
 		}
 	} else {
-		fmt.Fprintln(stdout, "Unrelated files preserved in:", *dir)
+		if !*machine {
+			fmt.Fprintln(stdout, "Unrelated files preserved in:", *dir)
+		}
+	}
+	if *machine {
+		return json.NewEncoder(stdout).Encode(map[string]any{"event": "credentials_removed", "id": manifest.ID, "directory": *dir, "unrelated_files_preserved": len(remaining) > 0, "access_revoked": false})
 	}
 	fmt.Fprintln(stdout, "Generated client credentials removed. To revoke a running target, use stop or revoke before cleanup.")
 	return nil
+}
+
+func relayConnectionState(transport string, active int64, reconnecting bool) string {
+	if transport != "relay" {
+		return "not_applicable"
+	}
+	if active > 0 {
+		return "connected"
+	}
+	if reconnecting {
+		return "reconnecting"
+	}
+	return "waiting"
 }

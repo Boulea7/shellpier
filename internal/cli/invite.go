@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -15,11 +16,12 @@ import (
 
 func invite(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	f := flags("invite", stderr)
+	machine := f.Bool("json", false, "emit invitation metadata as JSON")
 	base := f.String("relay", os.Getenv("SHELLPIER_RELAY_URL"), "HTTPS relay URL")
 	keyFile := f.String("token-file", "", "relay enrollment key file")
 	ttl := f.Duration("ttl", defaultSessionTTL, "authorization lifetime; 0 means explicitly persistent")
 	dir := f.String("out", "", "new private output directory")
-	if err := f.Parse(args); err != nil {
+	if err := parseFlags(f, args); err != nil {
 		return err
 	}
 	if f.NArg() != 0 || *base == "" || *dir == "" || *ttl < 0 || *ttl > 0 && *ttl < time.Second {
@@ -65,6 +67,13 @@ func invite(ctx context.Context, args []string, stdout, stderr io.Writer) error 
 	if err := writeJSONPrivate(hostPath, h); err != nil {
 		return err
 	}
+	if *machine {
+		if err := json.NewEncoder(stdout).Encode(map[string]any{"event": "invitation_created", "id": h.ID, "expires_at": h.ExpiresAt, "host_ticket": hostPath, "ssh_config": config}); err != nil {
+			return err
+		}
+		success = true
+		return nil
+	}
 	// The host ticket is deliberately separate from the operator's private key.
 	fmt.Fprintf(stdout, "Transfer host.ticket privately to the target, then run:\n  PowerShell: .\\shellpier.exe host '.\\host.ticket'\n  CMD:        shellpier.exe host host.ticket\n  Linux/mac:  ./shellpier host ./host.ticket\n\nHost ticket: %s\nOn this computer: ssh -F %s shellpier whoami\n", hostPath, displayArg(config))
 	success = true
@@ -74,8 +83,9 @@ func invite(ctx context.Context, args []string, stdout, stderr io.Writer) error 
 func revoke(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	input, args := ticketArgument(args)
 	f := flags("revoke", stderr)
+	machine := f.Bool("json", false, "emit revocation metadata as JSON")
 	timeout := f.Duration("timeout", 10*time.Second, "total revocation timeout")
-	if err := f.Parse(args); err != nil {
+	if err := parseFlags(f, args); err != nil {
 		return err
 	}
 	if input == "" && f.NArg() == 1 {
@@ -97,6 +107,9 @@ func revoke(ctx context.Context, args []string, stdout, stderr io.Writer) error 
 	defer cancel()
 	if err := relay.Revoke(c, t.RelayURL, ticketSession(t)); err != nil {
 		return err
+	}
+	if *machine {
+		return json.NewEncoder(stdout).Encode(map[string]any{"event": "revoked", "id": t.ID})
 	}
 	_, err = fmt.Fprintln(stdout, "Session revoked; relay connections closed.")
 	return err
