@@ -11,5 +11,7 @@ if errorlevel 7 (
 )
 echo Temporary foreground access. Close with Ctrl+C. No autostart is installed.
 echo Direct mode requires peer reachability. Set SHELLPIER_RELAY_URL and SHELLPIER_RELAY_KEY for your approved relay.
-"%~dp0shellpier.exe" share --keep-awake --output "%~dp0access.json"
+set "SHELLPIER_TICKET=%~dp0access-%RANDOM%-%RANDOM%.json"
+echo Private access file: "%SHELLPIER_TICKET%"
+"%~dp0shellpier.exe" share --keep-awake --output "%SHELLPIER_TICKET%"
 pause

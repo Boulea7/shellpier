@@ -2,4 +2,6 @@
 set -eu
 cd "$(dirname "$0")"
 echo 'Temporary foreground access; Ctrl+C stops it. Configure your approved relay environment if needed.'
-exec ./shellpier share --keep-awake --output ./access.json
+ticket="./access-$(date +%Y%m%d-%H%M%S)-$$.json"
+printf 'Private access file: %s\n' "$ticket"
+exec ./shellpier share --keep-awake --output "$ticket"
