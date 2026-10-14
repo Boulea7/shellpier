@@ -1,24 +1,17 @@
 # Changelog
 
-## v0.1.0-alpha.2 — 2026-10-14
+## v0.1.0-alpha.3 — 2026-10-14
 
-- 新增 `inspect`、`check`、`upload`、`download`、`keygen` 和 Shell `completion` 命令。
-- 支持 `version --json` 与 `revoke --timeout`，统一命令帮助和参数说明。
-- 按功能拆分 CLI 实现，便于维护命令及其测试。
-- 默认中文 README，保留英文版，补充项目横幅、贡献指南和文档导航。
-- 增加文档链接校验和 Fish completion CI 检查。
-
-本版本仍为预览版。平台验证以对应提交的 GitHub Actions 结果为准；Windows 7/8 的新 Legacy 流程仍需旧系统实机验收。
+- 新增 `inspect`、`check`、`upload`、`download`、`keygen` 和 Shell 补全，支持 `version --json` 与 `revoke --timeout`。
+- 默认会话时长改为 3 小时；建连和主机重连支持有限重试、指数退避与抖动，不重放远程操作。
+- 简化下载、启动和凭据准备流程，修复 Windows 私有文件权限与 Fish 补全检查。
+- 精简中英文 README，提供双语安全说明、模块指引和扩展开发指南。
+- 增加最低 Go 版本、实际程序退出码、重试恢复与永久错误测试。
 
 ## v0.1.0-alpha.1 — 2026-10-14
 
-- Temporary current-user SSH command execution and SFTP, with direct or WebSocket relay transport.
-- Controller-created invitations, pinned SSH configuration, diagnostics and session revocation.
-- Separate legacy Windows entrypoint, Agent skill and offline release packaging.
-- TLS and HTTP CONNECT proxy diagnostics, bounded relay queues, no credential-bearing redirects, and no automatic command replay.
-- Windows Job Object cleanup, SFTP path handling, private file permissions and manifest-based credential cleanup.
-- Bilingual README, compatibility and alternative-tool research, contribution guidelines and private vulnerability reporting.
+- 首个预览版：当前用户权限下的临时 SSH 命令执行与 SFTP，支持直连和 WSS 中继。
+- 提供邀请、独立 OpenSSH 配置、诊断、撤销、防睡眠和会话清理。
+- 提供 Windows 7/8 独立 Legacy 入口、Agent skill 和七种系统/架构的离线包。
 
-This is the first preview release. Modern binaries are built with Go 1.27.2 for seven OS/CPU targets; macOS binaries require version 13 or newer. CI exercises current Linux, macOS and Windows runners. Each run is linked to its commit in GitHub Actions; it does not validate every older OS or CPU.
-
-Windows 7/8 uses the separate Legacy PowerShell/Bitvise path. Parser and mock contracts do not replace testing a new Bitvise instance, scheduled expiry and cleanup on those systems. XP/Vista is not a supported automatic path. There is no bundled public relay, no PTY or desktop control, and cleanup does not erase audit logs or reverse executed commands.
+系统要求与测试范围见[兼容性说明](docs/compatibility.md)。
