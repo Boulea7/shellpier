@@ -1,81 +1,117 @@
-# Practical workflows
+# 从第一次连接到跨网络使用
 
-## Same LAN or USB tether: try direct first
+下面先用单机演练验证操作，再按网络情况选择直接连接或 WSS 中继。示例中的 `./shellpier` 用于 macOS/Linux；PowerShell 换为 `.\shellpier.exe`，并给所有 `@file` 参数加引号。
 
-On the target, inspect interfaces and start a short session. This exposes a temporary TCP listener, so choose a trusted network and permitted bind address.
+## 1. 单机演练：不需要外网或中继
+
+在解压目录开两个终端。终端 A：
 
 ```sh
-shellpier doctor
-shellpier share --ttl 15m --listen 0.0.0.0:0 --output access.json --json
+./shellpier share --listen 127.0.0.1:0 --ttl 15m --output access.json --json
 ```
 
-The JSON event reports the selected addresses, expiry and state path. Transfer `access.json` privately. On the controller, `shellpier connect @access.json -- hostname` and `shellpier connect @access.json -- whoami` prove target identity and actual peer reachability. A local IP in doctor output alone does not prove peers can reach it; guest Wi-Fi/campus client isolation and phone hotspot NAT can block direct access.
-
-On macOS/Linux with several interfaces, use `share --interface NAME` to advertise the intended addresses and `connect --interface NAME @access.json -- whoami` to constrain direct routing. The share flag does not replace `--listen`; it selects advertisement. Do not infer interface names from examples—read your own doctor output.
-
-## Outbound-only target: controller creates the invitation
-
-This keeps the controller's private SSH key on the controller from the beginning. Obtain an approved relay URL and creation-key file first.
+保持终端 A 打开。终端 B：
 
 ```sh
-shellpier doctor --relay https://relay.example.com
-shellpier invite --relay https://relay.example.com --token-file ./relay.key --ttl 30m --out ./invitation
+./shellpier connect @access.json -- whoami
+./shellpier connect @access.json -- hostname
 ```
 
-Send only `invitation/host.ticket` to the intended target through an authorized private channel. On the target:
+PowerShell 的终端 B 写法：
 
-```sh
-shellpier doctor --relay https://relay.example.com
-shellpier host @host.ticket
+```powershell
+.\shellpier.exe connect '@access.json' -- whoami
+.\shellpier.exe connect '@access.json' -- hostname
 ```
 
-On the controller:
+看到当前账户和机器名后，用终端 A 打印的**实际状态文件路径**停止：
 
 ```sh
-shellpier connect @invitation/access.json -- hostname
-shellpier connect @invitation/access.json -- whoami
+./shellpier status --state /实际打印的路径/state.json
+./shellpier stop --state /实际打印的路径/state.json
+./shellpier connect @access.json -- whoami
+```
+
+最后一次连接应失败。停止会删除状态文件，所以再查 `status` 可能报告找不到文件。单独的 `access.json` 不会被 `cleanup` 删除，结束后自行删除这个凭据文件。再次演练前选择新的输出文件名或删除旧文件。
+
+## 2. 两台机器：同网段时尝试直接连接
+
+目标端：
+
+```sh
+./shellpier doctor
+./shellpier share --listen 0.0.0.0:0 --ttl 15m --output access.json --json
+```
+
+输出包括候选地址、期限、状态路径。把 `access.json` 私下复制到控制端；控制端执行 `connect @access.json -- whoami`。这一步成功才说明真实网络可达，网卡地址本身不能证明。
+
+有多张网卡时，从 `doctor` 查出名称：目标端 `share --interface NAME` 只筛选公布地址，`--listen` 仍控制实际监听；macOS/Linux 控制端可用 `connect --interface NAME @access.json -- whoami` 约束出站网卡。不要照抄别人的网卡名。Windows 控制端暂不支持接口约束。
+
+校园访客网络的 AP 隔离、手机热点或 NAT 可能阻止直接连接。目标和控制端分处不同 NAT、均无法接受入站时，选择下一节的 WSS 路线。
+
+## 3. 跨网络：控制端发邀请
+
+先从团队或自托管中继运营者取得 HTTPS URL 和创建密钥文件。ShellPier 没有预置公共中继，`relay.example.com` 只是占位符。
+
+控制端：
+
+```sh
+./shellpier doctor --relay https://relay.example.com
+./shellpier invite --relay https://relay.example.com --token-file ./relay.key --ttl 30m --out ./invitation
+```
+
+只把 `invitation/host.ticket` 私下发送给目标端，控制端私钥留在邀请目录。目标端：
+
+```sh
+./shellpier doctor --relay https://relay.example.com
+./shellpier host @host.ticket
+```
+
+控制端：
+
+```sh
+./shellpier connect @invitation/access.json -- hostname
+./shellpier connect @invitation/access.json -- whoami
 ssh -F ./invitation/ssh_config shellpier hostname
 sftp -F ./invitation/ssh_config shellpier
 ```
 
-The target runs in the foreground. A network interruption may be retried within the session lifetime; interrupted commands are never replayed. Check remote effects before resubmitting a command whose response was lost.
+`ssh` / `sftp` 需要控制端另有 OpenSSH 客户端。内置 `connect` 不需要系统 SSH 客户端。双方通过出站 HTTPS/WSS 联系中继，SSH 字节在两端间加密。
 
-When finished, revoke and prove refusal before deleting credentials:
+结束后：
 
 ```sh
-shellpier revoke @invitation/host.ticket
-# This fresh attempt must fail after revocation:
-shellpier connect @invitation/access.json -- whoami
-shellpier cleanup --dir ./invitation
+./shellpier revoke @invitation/host.ticket
+./shellpier connect @invitation/access.json -- whoami
+./shellpier cleanup --dir ./invitation
 ```
 
-The refusal is evidence of revocation; a successful cleanup is only evidence that owned local files were removed. Preserve the host ticket if revocation could not be confirmed, so you can retry. Do not delete unrelated user files to make cleanup remove a directory.
+确认中间的新连接被拒绝，再清理凭据。若撤销未确认，保留票据用于重试。`cleanup` 保留目录中的无关文件，只清理清单所属凭据；它不能替代撤销。
 
-## Windows target and paths containing spaces
+## Windows 目标与文件传输
 
-Use the native executable on supported modern Windows. PowerShell quotes paths; invoking a quoted executable path requires `&`:
+目标端 PowerShell 示例：
 
 ```powershell
 & 'C:\Users\you\Tools\ShellPier\shellpier.exe' host '@C:\Users\you\Downloads\Session Files\host.ticket' --shell powershell --work-dir 'C:\Users\you\工作目录'
 ```
 
-Use `--shell cmd` only when the intended commands are CMD syntax. Built-in connect joins arguments into a remote shell command, so escaping follows the **target** shell. Prefer small, explicit commands before complex quoting or transferring a reviewed script with SFTP. Do not assume Unix `hostname`/`whoami` command syntax extends to every command on Windows.
+CMD 的文件参数不需要 PowerShell 的单引号；路径有空格时使用双引号：
 
-SFTP paths use forward slashes, including on Windows. Prefer paths relative to the session's working directory, such as `put local.txt remote.txt`. For an absolute Windows path, use `/C:/Users/you/remote.txt` with the leading slash. `C:\Users\you\remote.txt` is a local Windows path, not an SFTP protocol path. Quote paths containing spaces in the SFTP client.
-
-`--keep-awake` is opt-in and fails visibly when the OS mechanism is unavailable; it does not guarantee connectivity through lock, logout, reboot, lid policy or power loss. Default operation does not modify autostart, firewall rules, global routes or system SSH services. For Windows 7/8, use the [independent legacy guide](legacy-windows.md).
-
-## TTL, stop and persistence
-
-A normal session lasts one hour; set a shorter TTL for a probe. Keep the printed state path privately. Inspect status while running, then stop:
-
-```sh
-shellpier status --state /printed/private/runtime/state.json
-shellpier stop --state /printed/private/runtime/state.json
+```bat
+shellpier.exe host "@C:\Users\you\Downloads\Session Files\host.ticket" --shell cmd
 ```
 
-Shutdown removes its runtime state, so a subsequent status failure can mean it is already stopped. Prove actual rejection using the access ticket. A TTL acceptance test similarly attempts a fresh connection after the deadline.
+SFTP 内使用正斜杠。相对路径最容易操作：`put local.txt remote.txt`。Windows 绝对路径写 `/C:/Users/you/remote.txt`，带前导 `/`，不是 `C:\Users\you\remote.txt`；有空格时按 SFTP 客户端规则加引号。
 
-`--ttl 0` is an explicit persistent choice. Relays reject it unless operators enable `--allow-persistent`. It still does not install a service. If you need a supervisor, configure one separately with a dedicated approved account and private files; document who owns it, how to stop it and how to rotate/revoke credentials. No session persists across relay restarts in the current in-memory design.
+`--shell` 选择的是目标 shell，命令转义也跟随目标 shell。先验证简单命令，再上传已检查脚本或执行复杂命令。当前账户决定权限，`--work-dir` 不限制可访问的文件范围。
 
-In PowerShell, quote every `@file` ticket argument, e.g. `.\shellpier.exe connect '@access.json' -- whoami`. In CMD, `shellpier.exe connect @access.json -- whoami` is valid. The shell examples elsewhere use Unix/PATH syntax; bootstrap does not add the executable to PATH.
+Windows 7/8 请使用[独立 Legacy 指南](legacy-windows.md)，新流程尚未完成这些机器的实机验收。
+
+## 长期运行与断线
+
+需要长期前台会话时明确选择 `share --ttl 0` 或 `invite --ttl 0`；中继还必须配置 `--allow-persistent`。这不会安装开机服务，也不能跨中继重启恢复。
+
+`--keep-awake` 自愿开启，需要平台机制正常工作，不保证锁屏、合盖、强制睡眠、注销或重启后持续连接。需要服务管理器时由用户另行配置，并记录停止与凭据更新方式。
+
+网络中断可能在有效期内重连，但已经中断的命令不会自动重放。重试写文件、部署等命令前，先检查目标端是否已执行。stop/TTL 不回滚已产生的副作用。
