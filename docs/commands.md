@@ -31,7 +31,7 @@ PowerShell 的票据参数必须加引号，例如 `'@access.json'`。`@file` �
 
 ## 目标端：share / host
 
-`share` 默认直接模式，监听 `0.0.0.0:0`（自动选端口）、有效期一小时，权限属于当前运行账户。
+`share` 默认直接模式，监听 `0.0.0.0:0`（自动选端口）、有效期 3 小时，权限属于当前运行账户。
 
 | 参数 | 行为 |
 |---|---|
@@ -45,8 +45,9 @@ PowerShell 的票据参数必须加引号，例如 `'@access.json'`。`@file` �
 | `--shell auto` | 可选 `auto`、`powershell`、`cmd`、`sh` |
 | `--work-dir PATH` | 设置命令起始目录，不构成文件系统沙箱 |
 | `--keep-awake` | 自愿启用系统防睡眠机制，保持前台进程 |
+| `--reconnect-min 1s` / `--reconnect-max 30s` | share/host 的中继重连等待范围 |
 
-`host` 从票据继承中继和有效期，支持 `--json`、`--shell`、`--work-dir`、`--keep-awake`。例如：
+`host` 从票据继承中继和有效期，支持 `--json`、`--shell`、`--work-dir`、`--keep-awake` 和上述重连参数。例如：
 
 ```sh
 shellpier host @host.ticket --shell sh --work-dir /home/you/work
@@ -67,9 +68,11 @@ sftp -F ./ssh-session/ssh_config shellpier
 
 `connect --interface NAME @access.json -- whoami` 在 macOS/Linux 约束直接 TCP 连接的出站网卡；Windows 暂不支持这个参数的接口约束。它不适用于中继模式。中继通过获准的 HTTP CONNECT 代理出站时可配置 `HTTPS_PROXY`，但不自动处理 PAC、NTLM/Kerberos 或浏览器登录态。
 
-命令参数会拼接为目标端 shell 命令，带空格或元字符时按**目标端** shell 规则处理。失去响应不代表未执行，重试前检查目标端结果。支持 SSH 命令执行和 SFTP，不提供 PTY、图形桌面或端口转发。
+`connect` 的本地参数放在票据前，例如 `connect --retries 0 @access.json -- whoami`；票据后的 `--` 分隔远端命令。命令参数会拼接为目标端 shell 命令，带空格或元字符时按**目标端** shell 规则处理。失去响应不代表未执行，重试前检查目标端结果。支持 SSH 命令执行和 SFTP，不提供 PTY、图形桌面或端口转发。
 
-## 分步检查、文件传输与密钥
+`connect`、`check`、`upload`、`download` 支持 `--retries 2`（默认最多 3 次建连，`0` 关闭重试），以及 `--retry-min 200ms` / `--retry-max 3s`（等待上限不得超过 1 分钟）。这些参数只控制 SSH 建连前的暂时网络错误；命令执行或传输开始后不自动重放。中继断线重连机制见[工作流](workflows.md#长期运行与断线)。
+
+## 按需诊断、文件传输与密钥
 
 ```sh
 shellpier inspect @access.json --json
@@ -79,11 +82,11 @@ shellpier download @access.json remote.txt ./received.txt --timeout 5m --json
 shellpier keygen --out ./legacy-keys --json
 ```
 
-`inspect` 仅检查本地票据，不连接目标；`check` 会建立 SSH 并运行身份检查。`check` 默认超时 20 秒，接受 1 秒至 5 分钟。传输默认超时 5 分钟，支持 `--interface NAME` 与 `--json`，只传单个普通文件，不覆盖目标。上传失败可能留下远端部分文件，先核对再处理；下载失败只清理本次创建的本地部分文件。Windows 远端绝对路径写 `/C:/Users/you/file.txt`。
+这些检查按需使用。`inspect` 仅检查本地票据，不连接目标；`check` 会建立 SSH 并运行身份检查。`check` 默认超时 20 秒，接受 1 秒至 5 分钟。传输默认超时 5 分钟，支持 `--interface NAME` 与 `--json`，只传单个普通文件，不覆盖目标。上传失败可能留下远端部分文件，先核对再处理；下载失败只清理本次创建的本地部分文件。Windows 远端绝对路径写 `/C:/Users/you/file.txt`。
 
 `keygen` 的父目录须存在，输出目录须不存在。它生成私有 `identity` 与 `identity.pub`，stdout 只输出路径和 SHA256 指纹；Legacy 配置使用公钥，私钥留在控制端。未提供 RSA 或密码加密选项。
 
-`completion bash|zsh|fish|powershell` 只打印脚本，不修改 shell profile。检查脚本后按相应 shell 方式显式加载；PowerShell 补全要求 7+，不是 Legacy PowerShell 2.0 入口。
+`completion bash|zsh|fish|powershell` 只打印脚本，不修改 shell profile。检查脚本后按相应 shell 方式显式加载；PowerShell 补全要求 7+。
 
 ## 生命周期与中继参数
 

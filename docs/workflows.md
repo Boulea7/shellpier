@@ -1,13 +1,13 @@
 # 从第一次连接到跨网络使用
 
-下面先用单机演练验证操作，再按网络情况选择直接连接或 WSS 中继。示例中的 `./shellpier` 用于 macOS/Linux；PowerShell 换为 `.\shellpier.exe`，并给所有 `@file` 参数加引号。
+可以直接按网络情况选择连接方式；单机演练和诊断仅在需要时使用。默认会话有效期为 3 小时，示例短 TTL 可按需调整。示例中的 `./shellpier` 用于 macOS/Linux；PowerShell 换为 `.\shellpier.exe`，并给所有 `@file` 参数加引号。
 
 ## 1. 单机演练：不需要外网或中继
 
 在解压目录开两个终端。终端 A：
 
 ```sh
-./shellpier share --listen 127.0.0.1:0 --ttl 15m --output access.json --json
+./shellpier share --relay= --listen 127.0.0.1:0 --ttl 15m --output access.json --json
 ```
 
 保持终端 A 打开。终端 B：
@@ -39,13 +39,12 @@ PowerShell 的终端 B 写法：
 目标端：
 
 ```sh
-./shellpier doctor
-./shellpier share --listen 0.0.0.0:0 --ttl 15m --output access.json --json
+./shellpier share --relay= --listen 0.0.0.0:0 --ttl 15m --output access.json --json
 ```
 
-输出包括候选地址、期限、状态路径。把 `access.json` 私下复制到控制端；控制端执行 `connect @access.json -- whoami`。这一步成功才说明真实网络可达，网卡地址本身不能证明。
+输出包括候选地址、期限、状态路径。把 `access.json` 私下复制到控制端；控制端执行 `connect @access.json -- whoami`。
 
-有多张网卡时，从 `doctor` 查出名称：目标端 `share --interface NAME` 只筛选公布地址，`--listen` 仍控制实际监听；macOS/Linux 控制端可用 `connect --interface NAME @access.json -- whoami` 约束出站网卡。不要照抄别人的网卡名。Windows 控制端暂不支持接口约束。
+连接失败或有多张网卡时，可按需从 `doctor` 查出名称：目标端 `share --interface NAME` 只筛选公布地址，`--listen` 仍控制实际监听；macOS/Linux 控制端可用 `connect --interface NAME @access.json -- whoami` 约束出站网卡。不要照抄别人的网卡名。Windows 控制端暂不支持接口约束。
 
 校园访客网络的 AP 隔离、手机热点或 NAT 可能阻止直接连接。目标和控制端分处不同 NAT、均无法接受入站时，选择下一节的 WSS 路线。
 
@@ -56,14 +55,12 @@ PowerShell 的终端 B 写法：
 控制端：
 
 ```sh
-./shellpier doctor --relay https://relay.example.com
 ./shellpier invite --relay https://relay.example.com --token-file ./relay.key --ttl 30m --out ./invitation
 ```
 
 只把 `invitation/host.ticket` 私下发送给目标端，控制端私钥留在邀请目录。目标端：
 
 ```sh
-./shellpier doctor --relay https://relay.example.com
 ./shellpier host @host.ticket
 ```
 
@@ -106,7 +103,7 @@ SFTP 内使用正斜杠。相对路径最容易操作：`put local.txt remote.tx
 
 `--shell` 选择的是目标 shell，命令转义也跟随目标 shell。先验证简单命令，再上传已检查脚本或执行复杂命令。当前账户决定权限，`--work-dir` 不限制可访问的文件范围。
 
-Windows 7/8 请使用[独立 Legacy 指南](legacy-windows.md)，新流程尚未完成这些机器的实机验收。
+Windows 7/8 请使用[独立 Legacy 指南](legacy-windows.md)，支持范围见[兼容性说明](compatibility.md)。
 
 ## 长期运行与断线
 
@@ -114,4 +111,4 @@ Windows 7/8 请使用[独立 Legacy 指南](legacy-windows.md)，新流程尚未
 
 `--keep-awake` 自愿开启，需要平台机制正常工作，不保证锁屏、合盖、强制睡眠、注销或重启后持续连接。需要服务管理器时由用户另行配置，并记录停止与凭据更新方式。
 
-网络中断可能在有效期内重连，但已经中断的命令不会自动重放。重试写文件、部署等命令前，先检查目标端是否已执行。stop/TTL 不回滚已产生的副作用。
+`share`/`host` 中继网络中断后，在有效期内按有界指数退避与抖动重连，默认等待范围 1–30 秒，连接稳定 10 秒后复位。取消、到期、认证失败或撤销会立即停止。控制端仅在 SSH 建连前对暂时网络错误有限重试；已经开始的命令和传输不自动重放。参数见[命令手册](commands.md)。重试写文件、部署等操作前，先检查目标端副作用。stop/TTL 不回滚已产生的副作用。

@@ -1,6 +1,6 @@
 # 排查连接问题
 
-先判断失败发生在哪一层：程序能否运行 → 目标进程是否仍在 → 网络是否可达 → HTTPS/WSS 是否建立 → SSH 命令是否完成。不要只凭一个健康检查或网卡地址就判定整条链路正常。
+遇到连接问题再按需诊断，无需每次连接先跑完整检查。先判断失败发生在哪一层：程序能否运行 → 目标进程是否仍在 → 网络是否可达 → HTTPS/WSS 是否建立 → SSH 命令是否完成。
 
 ## 最短排查路径
 
@@ -39,7 +39,8 @@
 | 主机公钥校验失败 | 先独立确认目标身份，再创建新会话；不要禁用主机公钥校验 |
 | SFTP 找不到 Windows 文件 | 先尝试相对路径；绝对路径用 `/C:/Users/you/file.txt`，空格按客户端规则加引号 |
 | 命令没有响应 | 先检查目标端是否已产生副作用，再决定重试；不会自动重放中断命令 |
-| Win7/8 无法运行现代 EXE | 使用[独立 Legacy 流程](legacy-windows.md)，其新流程尚需实机验收 |
+| 想立即看到建连失败 | 使用 `./shellpier connect --retries 0 @access.json -- whoami`；PowerShell 写 `.\shellpier.exe connect --retries 0 '@access.json' -- whoami`。其他支持重试的命令见[命令手册](commands.md) |
+| Win7/8 无法运行现代 EXE | 使用[独立 Legacy 流程](legacy-windows.md)，支持范围见[兼容性说明](compatibility.md) |
 
 `share --interface` 筛选公布地址，`--listen` 才决定实际监听；两者不要混淆。直接接口约束当前支持 macOS/Linux，Linux 可能因 `SO_BINDTODEVICE` 权限失败，错误会明确返回，Windows 暂不支持。
 
@@ -53,7 +54,7 @@
 
 提交 Issue 时提供 OS/CPU、`version`、失败命令的参数结构、退出码和脱敏诊断，注明单机、直接还是中继模式，以及两端分别在哪一步失败。使用 `[票据文件]` 等占位符，不附 `access.json`、`host.ticket`、identity、创建密钥、私钥或完整 Authorization。
 
-编译成功、CI 通过和最低系统实机验证是不同证据。当前发行面向现代 Windows、Linux、macOS；详细要求见[兼容性说明](compatibility.md)。不要用现代 Windows 的成功结果替代 Win7/8 新 Legacy 流程验收。
+系统与架构要求见[兼容性说明](compatibility.md)。
 
 ## 当前传输不适用时
 
@@ -65,4 +66,4 @@
 | [Bitvise SSH Server](https://bitvise.com/ssh-server) | Legacy Windows 的独立服务端 | 核对版本、OS 支持和许可，通常需要管理员安装 |
 | [PuTTY](https://www.chiark.greenend.org.uk/~sgtatham/putty/latest.html) | Windows 的现有 SSH 客户端连接 | PuTTY/Plink 本身不让目标变得可达，也不把原始 SSH 变成 HTTPS |
 
-这些是独立产品，不是 ZIP 内的自动后备方案。需要时从官方来源取得合适版本，再按实际网络和账户权限验证。
+这些工具需从官方来源单独下载和配置。
