@@ -6,6 +6,18 @@ on:
 permissions:
   contents: read
 jobs:
+  minimum-go:
+    runs-on: ubuntu-latest
+    env:
+      GOTOOLCHAIN: local
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-go@v7.0.0
+        with:
+          go-version: '1.26.x'
+          cache: true
+      - run: go test -timeout 5m ./...
+      - run: go build ./cmd/shellpier
   test:
     strategy:
       fail-fast: false
@@ -42,7 +54,21 @@ jobs:
           sudo apt-get install --no-install-recommends -y fish
           ./shellpier-smoke completion fish > "$RUNNER_TEMP/shellpier-completion.fish"
           fish -n "$RUNNER_TEMP/shellpier-completion.fish"
-          fish -c 'source $argv[1]; complete -C "shellpier co" | string match -qr "^connect$"; or exit 1; complete -C "shellpier ke" | string match -qr "^keygen$"; or exit 1; complete -C "shellpier.exe co" | string match -qr "^connect$"; or exit 1; complete -C "shellpier completion po" | string match -qr "^powershell$"; or exit 1' "$RUNNER_TEMP/shellpier-completion.fish"
+          fish -c '
+            source $argv[1]
+            function assert_candidate --argument-names command_line expected
+              set -l candidates (complete -C "$command_line")
+              if not contains -- "$expected" $candidates
+                printf "Missing candidate %s for: %s\n" "$expected" "$command_line" >&2
+                printf "Candidates: %s\n" $candidates >&2
+                exit 1
+              end
+            end
+            assert_candidate "shellpier co" connect
+            assert_candidate "shellpier ke" keygen
+            assert_candidate "shellpier.exe co" connect
+            assert_candidate "shellpier completion po" powershell
+          ' "$RUNNER_TEMP/shellpier-completion.fish"
       - if: runner.os == 'Windows'
         name: Legacy Windows contracts and syntax (modern runner)
         shell: pwsh
