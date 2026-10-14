@@ -15,7 +15,7 @@
 | Apple Silicon macOS | `darwin_arm64.zip` |
 | Linux x86_64 / ARM64 | `linux_amd64.zip` / `linux_arm64.zip` |
 
-完整文件名形如 `shellpier_v0.2.0-alpha.1_windows_amd64.zip`。Windows 在“设置 → 系统 → 关于 → 系统类型”查看架构；macOS/Linux 运行 `uname -m`。优先选原生架构。
+完整文件名形如 `shellpier_v0.2.0-alpha.2_windows_amd64.zip`。Windows 在“设置 → 系统 → 关于 → 系统类型”查看架构；macOS/Linux 运行 `uname -m`。优先选原生架构。
 
 这一版用 Go 1.27.2 构建，原生 Windows 入口面向 Windows 10 及更新系统，macOS 最低为 13。更完整的范围见[兼容性说明](compatibility.md)。Windows 7/8 使用[独立 Legacy 流程](legacy-windows.md)，支持范围见[兼容性说明](compatibility.md)。
 
@@ -54,13 +54,13 @@ Windows 包含 `START.cmd`，macOS 包含 `start.command`：启动前台会话�
 下载脚本接收 HTTPS ZIP 地址和解压目录，不运行下载后的程序。现代 Windows 需要 PowerShell 5.1+：
 
 ```powershell
-.\scripts\bootstrap.ps1 -ArchiveUrl 'https://your-approved-host/shellpier_v0.2.0-alpha.1_windows_amd64.zip' -Destination 'C:\Users\you\Tools\ShellPier'
+.\scripts\bootstrap.ps1 -ArchiveUrl 'https://your-approved-host/shellpier_v0.2.0-alpha.2_windows_amd64.zip' -Destination 'C:\Users\you\Tools\ShellPier'
 ```
 
 CMD 可通过 `scripts\bootstrap.cmd` 传递同样的参数。macOS/Linux：
 
 ```sh
-sh scripts/bootstrap.sh 'https://your-approved-host/shellpier_v0.2.0-alpha.1_linux_amd64.zip' './ShellPier'
+sh scripts/bootstrap.sh 'https://your-approved-host/shellpier_v0.2.0-alpha.2_linux_amd64.zip' './ShellPier'
 ```
 
 将示例 URL 换成实际下载地址，目标目录须不存在。
