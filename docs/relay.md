@@ -31,7 +31,7 @@ ShellPier 没有公共中继。团队运营者需要提供可信 HTTPS URL 和�
 ./shellpier cleanup --dir ./relay-demo
 ```
 
-撤销后新连接应失败。这只验证同机中继链路，不验证外部网络。明文 HTTP 仅允许回环地址；两台机器或跨网络部署使用 HTTPS/WSS。
+撤销后新连接应失败。明文 HTTP 仅允许回环地址；两台机器或跨网络部署使用 HTTPS/WSS。
 
 PowerShell 将 `./shellpier` 换成 `.\shellpier.exe`，给 `@relay-demo/host.ticket` 和 `@relay-demo/access.json` 加单引号。
 
@@ -70,10 +70,10 @@ relay.example.com {
 ```sh
 git clone https://github.com/Boulea7/shellpier.git
 cd shellpier
-docker build --build-arg GO_IMAGE='golang:1.27.2@sha256:<已核验的镜像摘要>' -f deploy/Dockerfile -t shellpier .
+docker build --build-arg GO_IMAGE='golang:1.27.2' -f deploy/Dockerfile -t shellpier .
 ```
 
-替换镜像摘要后执行。源码工具链下限以 [go.mod](../go.mod) 为准；alpha.1 发行二进制使用 Go 1.27.2。此例使用相同发行工具链，不声称所有较低工具链均已验收。
+源码工具链下限以 [go.mod](../go.mod) 为准；现有发行二进制使用 Go 1.27.2。
 
 镜像从 scratch 运行，使用 UID/GID 65532。将创建密钥作为只读文件挂载到 `/run/secrets/relay.key`，保证该 UID 可读，并只把后端端口映射到本机回环：
 
@@ -95,4 +95,6 @@ docker run --rm --name shellpier-relay -p 127.0.0.1:8080:8080 --mount type=bind,
 
 创建密钥只能交给允许创建会话的人；每个会话的 host/client 角色票据不同。SSH 内容在两端加密，中继仍可观察连接来源、时长等元数据。中继重启会丢失所有内存会话，包括长期会话。
 
-组织认证必须兼容 CLI 的 HTTPS/WSS，浏览器门户登录不一定适用。HTTP CONNECT 代理需要网络和认证方式适配；不自动支持 PAC、NTLM/Kerberos 或继承浏览器登录态。上线前检查代理连接限额、实际内存与时钟，并确保应用和反向代理不记录 Authorization 或票据。发生凭据泄露时撤销对应会话、更新受影响密钥。
+客户端网络重连不恢复已丢失的中继会话，也不重放命令或传输。会话默认有效期为 3 小时；重试参数见[命令手册](commands.md)，机制见[工作流](workflows.md#长期运行与断线)。
+
+组织认证必须兼容 CLI 的 HTTPS/WSS，浏览器门户登录不一定适用。HTTP CONNECT 代理需要网络和认证方式适配；不自动支持 PAC、NTLM/Kerberos 或继承浏览器登录态。确保应用和反向代理不记录 Authorization 或票据。发生凭据泄露时撤销对应会话、更新受影响密钥。
