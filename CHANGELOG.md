@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.1.0-alpha.2 — 2026-10-14
+
+- 新增 `inspect`、`check`、`upload`、`download`、`keygen` 和 Shell `completion` 命令。
+- 支持 `version --json` 与 `revoke --timeout`，统一命令帮助和参数说明。
+- 按功能拆分 CLI 实现，便于维护命令及其测试。
+- 默认中文 README，保留英文版，补充项目横幅、贡献指南和文档导航。
+- 增加文档链接校验和 Fish completion CI 检查。
+
+本版本仍为预览版。平台验证以对应提交的 GitHub Actions 结果为准；Windows 7/8 的新 Legacy 流程仍需旧系统实机验收。
+
 ## v0.1.0-alpha.1 — 2026-10-14
 
 - Temporary current-user SSH command execution and SFTP, with direct or WebSocket relay transport.
