@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.2.0-alpha.1 — 2026-10-15
+
+- 新增 `shell` 交互终端：Unix PTY、Windows ConPTY、尺寸同步、信号与退出清理。
+- 新增 `terminal` 持久终端控制，支持分次读取、输入、调整尺寸、发信号和关闭；默认最长 3 小时，有界输出与私有状态。
+- 新增 `exec` 精确命令、脚本、环境变量、工作目录、超时和有界 JSON 结果；保留远端退出码。
+- 新增 SFTP `files` 操作、`sessions` 会话发现和 `capabilities` 目标能力查询。
+- 新增离线 `schema`、全局 JSON 错误、分层命令补全，统一参数解析与管理命令输出。
+- 补充原生终端、进程回收、真实二进制和 Agent 操作测试，更新中文手册与 Agent skill。
+
 ## v0.1.0-alpha.3 — 2026-10-14
 
 - 新增 `inspect`、`check`、`upload`、`download`、`keygen` 和 Shell 补全，支持 `version --json` 与 `revoke --timeout`。
