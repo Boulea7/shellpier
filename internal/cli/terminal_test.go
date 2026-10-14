@@ -784,3 +784,61 @@ func TestTerminalWindowsStateUpdateWaitsForReader(t *testing.T) {
 		t.Fatalf("state update lost or invalid: %v", err)
 	}
 }
+
+func TestTerminalStateRereadRequiresObservedReplacement(t *testing.T) {
+	state, path := terminalTestState(t)
+	calls := 0
+	data, err := terminalReadStateBytes(path, func(path string, limit int64) ([]byte, error) {
+		calls++
+		if calls == 1 {
+			state.Cols = 91
+			if err := terminalReplacePrivate(path, state); err != nil {
+				return nil, err
+			}
+			return nil, access.ErrFileChanged
+		}
+		return readRegular(path, limit)
+	})
+	var updated terminalState
+	if err != nil || json.Unmarshal(data, &updated) != nil || updated.Cols != 91 || calls != 2 {
+		t.Fatalf("observed update was not reread: %v calls=%d", err, calls)
+	}
+	calls = 0
+	_, err = terminalReadStateBytes(path, func(string, int64) ([]byte, error) { calls++; return nil, access.ErrFileChanged })
+	if err == nil || calls != 1 {
+		t.Fatal("unobserved replacement was masked")
+	}
+	calls = 0
+	_, err = terminalReadStateBytes(path, func(path string, _ int64) ([]byte, error) {
+		calls++
+		state.Cols++
+		if err := terminalReplacePrivate(path, state); err != nil {
+			return nil, err
+		}
+		return nil, access.ErrFileChanged
+	})
+	if err == nil || calls != 8 {
+		t.Fatalf("reread not bounded: %v calls=%d", err, calls)
+	}
+}
+func TestTerminalStateRereadRejectsNonPrivateReplacement(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Unix mode permissions; Windows DACL protection is checked by shared private-file tests")
+	}
+	_, path := terminalTestState(t)
+	calls := 0
+	_, err := terminalReadStateBytes(path, func(path string, _ int64) ([]byte, error) {
+		calls++
+		replacement := filepath.Join(filepath.Dir(path), "public.json")
+		if err := os.WriteFile(replacement, []byte(`{"unrelated":"not private"}`), 0644); err != nil {
+			return nil, err
+		}
+		if err := os.Rename(replacement, path); err != nil {
+			return nil, err
+		}
+		return nil, access.ErrFileChanged
+	})
+	if err == nil || calls != 1 {
+		t.Fatal("unsafe replacement retried or read")
+	}
+}

@@ -95,7 +95,7 @@ func terminalReadState(path string, allowPending bool) (terminalState, error) {
 	if err := checkPrivateSessionFile(path); err != nil {
 		return state, err
 	}
-	data, err := readRegular(path, terminalFileLimit)
+	data, err := terminalReadStateBytes(path, readRegular)
 	if err != nil {
 		return state, err
 	}
@@ -127,6 +127,47 @@ func terminalReadState(path string, allowPending bool) (terminalState, error) {
 	}
 	return state, nil
 }
+
+// A legitimate atomic update can move the pathname between ReadFile's lstat/open.
+// Retry only an observed identity change, rechecking owner and private permissions.
+func terminalReadStateBytes(path string, read func(string, int64) ([]byte, error)) ([]byte, error) {
+	var last error
+	for attempt := 0; attempt < 8; attempt++ {
+		if err := checkPrivateSessionDir(filepath.Dir(path)); err != nil {
+			return nil, err
+		}
+		if err := checkPrivateSessionFile(path); err != nil {
+			return nil, err
+		}
+		before, err := terminalFileIdentity(path)
+		if err != nil {
+			return nil, err
+		}
+		data, err := read(path, terminalFileLimit)
+		if err == nil {
+			return data, nil
+		}
+		if !errors.Is(err, access.ErrFileChanged) {
+			return nil, err
+		}
+		if e := checkPrivateSessionDir(filepath.Dir(path)); e != nil {
+			return nil, e
+		}
+		if e := checkPrivateSessionFile(path); e != nil {
+			return nil, e
+		}
+		after, e := terminalFileIdentity(path)
+		if e != nil || os.SameFile(before, after) {
+			return nil, err
+		}
+		last = err
+		if attempt < 7 {
+			time.Sleep(5 * time.Millisecond)
+		}
+	}
+	return nil, fmt.Errorf("terminal state did not stabilize after bounded reread: %w", last)
+}
+
 func terminalReplacePrivate(path string, value any) error {
 	if err := checkPrivateSessionDir(filepath.Dir(path)); err != nil {
 		return err

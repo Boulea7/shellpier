@@ -26,6 +26,9 @@ const maxTicket = 32 * 1024
 
 var safeID = regexp.MustCompile(`^[A-Za-z0-9_-]{16,64}$`)
 
+// ErrFileChanged reports replacement between a bounded file check and open.
+var ErrFileChanged = errors.New("file changed while opening")
+
 type Ticket struct {
 	Version        int       `json:"version"`
 	Kind           string    `json:"kind"`
@@ -311,7 +314,7 @@ func ReadFile(path string, limit int64) ([]byte, error) {
 		return nil, err
 	}
 	if !opened.Mode().IsRegular() || !os.SameFile(info, opened) {
-		return nil, errors.New("file changed while opening")
+		return nil, ErrFileChanged
 	}
 	b, err := io.ReadAll(io.LimitReader(f, limit+1))
 	if err != nil {

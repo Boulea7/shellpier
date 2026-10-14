@@ -38,5 +38,8 @@ func terminalFileIdentity(path string) (os.FileInfo, error) {
 	return info, nil
 }
 func terminalRetryReplace(err error) bool {
-	return errors.Is(err, windows.ERROR_SHARING_VIOLATION) || errors.Is(err, windows.ERROR_LOCK_VIOLATION)
+	// MoveFileEx reports ACCESS_DENIED as well as SHARING_VIOLATION when
+	// replacing an existing destination held without FILE_SHARE_DELETE.
+	// The caller rechecks the original identity and private DACL on every attempt.
+	return errors.Is(err, windows.ERROR_ACCESS_DENIED) || errors.Is(err, windows.ERROR_SHARING_VIOLATION) || errors.Is(err, windows.ERROR_LOCK_VIOLATION)
 }
