@@ -19,6 +19,8 @@ Your AI Agent's computer:
   shellpier invite --relay URL --out NEW-DIRECTORY
   shellpier connect [--interface NAME] <access-ticket or @file> -- whoami
   shellpier ssh-config <access-ticket or @file> --out NEW-DIRECTORY
+  shellpier upload <access-ticket or @file> LOCAL REMOTE
+  shellpier download <access-ticket or @file> REMOTE LOCAL
   shellpier revoke <host-ticket or @file>
 
 Lifecycle and diagnostics:
@@ -73,6 +75,8 @@ func Run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 		return inspect(args[1:], stdout, stderr)
 	case "check":
 		return check(ctx, args[1:], stdout, stderr)
+	case "upload", "download":
+		return transfer(ctx, args[0], args[1:], stdout, stderr)
 	case "status", "stop":
 		return control(ctx, args[0], args[1:], stdout, stderr)
 	case "revoke":
