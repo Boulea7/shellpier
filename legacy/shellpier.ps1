@@ -7,7 +7,7 @@ param(
     [string]$AllowedClient,
     [string]$ListenAddress = '0.0.0.0',
     [int]$Port = 2222,
-    [int]$TtlMinutes = 60,
+    [int]$TtlMinutes = 180,
     [switch]$AcceptLicense,
     [switch]$AllowInstall,
     [string]$Session,
@@ -81,7 +81,7 @@ function Remove-Access($State) {
 try {
     if ($Command -eq 'help') {
         Write-Host 'ShellPier legacy: doctor | prepare | start | status -Session ID | stop -Session ID'
-        Write-Host 'start -Installer FILE -PublicKey FILE -AllowedClient IPv4 -AcceptLicense -AllowInstall [-Port 2222] [-TtlMinutes 60]'
+        Write-Host 'start -Installer FILE -PublicKey FILE -AllowedClient IPv4 -AcceptLicense -AllowInstall [-Port 2222] [-TtlMinutes 180]'
         Write-Host 'prepare -Mode reverse -Plink FILE -RelayHost HOST -RelayUser USER -RelayHostKey FINGERPRINT -RelayPrivateKey FILE -PlinkSha256 SHA256'
         Write-Host 'No downloads, default-instance changes, automatic reboot or system-log deletion.'
     } elseif ($Command -eq 'doctor') {
