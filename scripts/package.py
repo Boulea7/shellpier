@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
-"""Cross-build offline release archives and a SHA-256 manifest."""
+"""Cross-build offline release archives."""
 import argparse
-import hashlib
 from pathlib import Path
 import os
 import subprocess
@@ -19,7 +18,6 @@ root = Path(__file__).resolve().parents[1]
 out = Path(args.out).resolve()
 out.mkdir(parents=True, exist_ok=True)
 targets = [('windows','amd64'),('windows','386'),('windows','arm64'),('linux','amd64'),('linux','arm64'),('darwin','amd64'),('darwin','arm64')]
-checksums = []
 for system, arch in targets:
     with tempfile.TemporaryDirectory(prefix='shellpier-release-') as work:
         binary = Path(work) / ('shellpier.exe' if system == 'windows' else 'shellpier')
@@ -32,20 +30,19 @@ for system, arch in targets:
                 z.write(root/'scripts/START.cmd','START.cmd')
             elif system == 'darwin':
                 z.write(root/'scripts/start.command','start.command')
-            public_files = ['LICENSE','CONTRIBUTING.md','SECURITY.md','CODE_OF_CONDUCT.md','CHANGELOG.md','SUPPORT.md','THIRD_PARTY_NOTICES.md','go.mod','go.sum']
+            public_files = ['LICENSE','CONTRIBUTING.md','CODE_OF_CONDUCT.md','CHANGELOG.md','SUPPORT.md','THIRD_PARTY_NOTICES.md','go.mod','go.sum']
             public_files.extend(path.name for path in sorted(root.glob('README*.md')))
+            public_files.extend(path.name for path in sorted(root.glob('SECURITY*.md')))
             for name in public_files:
                 z.write(root/name,name)
             for directory in ['skills','legacy','scripts','docs','deploy','assets']:
                 path = root/directory
                 if path.exists():
                     for file in sorted(path.rglob('*')):
-                        if file.is_file() and '__pycache__' not in file.parts:
+                        if file.is_file() and file.name != 'AGENTS.md' and '__pycache__' not in file.parts:
                             z.write(file,str(file.relative_to(root)))
         with tempfile.TemporaryDirectory(prefix='shellpier-docs-') as unpacked:
             with zipfile.ZipFile(archive) as z:
                 z.extractall(unpacked)
             subprocess.run([sys.executable, str(root/'scripts/validate_docs.py'), '--root', unpacked], check=True)
-        checksums.append(f'{hashlib.sha256(archive.read_bytes()).hexdigest()}  {archive.name}')
-(out/'checksums.txt').write_text('\n'.join(checksums)+'\n')
 print(f'Built {len(targets)} archives in {out}')

@@ -9,7 +9,7 @@ from urllib.parse import unquote, urlsplit
 import xml.etree.ElementTree as ET
 
 PUBLIC_DIRECTORIES = ('docs', 'assets', 'skills', 'legacy', 'scripts', 'deploy')
-PRIVATE_NAMES = {'AGENTS.md', 'CLAUDE.md', 'GEMINI.md'}
+PRIVATE_NAMES = {'CLAUDE.md', 'GEMINI.md'}
 
 
 def without_code(text):
@@ -64,6 +64,11 @@ def validate(root):
     root = root.resolve()
     files = {path for path in root.glob('*.md') if path.name not in PRIVATE_NAMES}
     files.update(root.glob('*.html'))
+    # Public module guides are source-only; an unpacked release has no such tree.
+    for directory in ('cmd', 'internal'):
+        base = root / directory
+        if base.exists():
+            files.update(base.rglob('AGENTS.md'))
     for directory in PUBLIC_DIRECTORIES:
         base = root / directory
         if base.exists():

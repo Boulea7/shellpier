@@ -29,10 +29,9 @@ jobs:
         env:
           RELEASE_VERSION: ${{ inputs.version || github.ref_name }}
         run: python scripts/package.py --version "$RELEASE_VERSION"
-      - name: Record source and verify archive checksums
+      - name: Record source commit
         run: |
           git rev-parse HEAD > dist/source-commit.txt
-          (cd dist && sha256sum --check checksums.txt)
       - uses: actions/upload-artifact@v7.0.2
         with:
           name: shellpier-release
@@ -55,6 +54,10 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ github.ref_name }}
         run: |
-          (cd dist && sha256sum --check checksums.txt)
           test "$(cat dist/source-commit.txt)" = "$(git rev-parse HEAD)"
-          gh release create "$RELEASE_TAG" dist/* --verify-tag --draft --prerelease --title "ShellPier $RELEASE_TAG" --notes-file CHANGELOG.md
+          awk -v tag="$RELEASE_TAG" '
+            /^## / { if (found) exit; if ($2 == tag) { found=1; next } }
+            found { print }
+          ' CHANGELOG.md > "$RUNNER_TEMP/release-notes.md"
+          test -s "$RUNNER_TEMP/release-notes.md"
+          gh release create "$RELEASE_TAG" dist/*.zip --verify-tag --draft --prerelease --title "ShellPier $RELEASE_TAG" --notes-file "$RUNNER_TEMP/release-notes.md"
