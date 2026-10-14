@@ -37,12 +37,10 @@ Lifecycle and diagnostics:
   shellpier version [--json]
 
 Default: foreground, three-hour lifetime, current user's permissions.
-Direct mode needs peer reachability; campus/hotspot NAT usually needs a relay.
-Relay creation needs SHELLPIER_RELAY_KEY or --token-file. No public relay is bundled.
-Use --ttl 0 for an explicitly persistent session (relay operator must also allow it).
-Native binary: modern Windows, Linux, macOS. Windows 7/8: use legacy/shellpier.cmd.
-Tickets contain credentials. Share them privately, and never commit them.
-SSH exec and SFTP are supported; graphical desktop control and PTY are not.
+Direct connections need reachable peers. Across NAT, configure a relay.
+Use --ttl 0 for a persistent session; the relay must allow it.
+Tickets are credentials. Share them privately.
+Run shellpier <command> --help for options.
 `
 
 func Run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer, version string) (result error) {
