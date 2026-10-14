@@ -3,10 +3,53 @@
 package platform
 
 import (
+	"bytes"
 	"context"
+	"io"
+	"os"
+	"os/exec"
+	"strings"
 	"testing"
 	"time"
 )
+
+func TestTerminalWindowsRedirectedParentHandles(t *testing.T) {
+	const helperEnv = "SHELLPIER_TEST_CONPTY_REDIRECTED_PARENT"
+	const marker = "__CONPTY_REDIRECTED_OUTPUT__"
+	if os.Getenv(helperEnv) == "1" {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		terminal, err := StartTerminal(ctx, TerminalOptions{Shell: "cmd", Command: "echo " + marker + " & exit /b 0", Columns: 80, Rows: 24})
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer terminal.Close()
+		output, err := io.ReadAll(terminal)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(string(output), marker) {
+			t.Fatal("command output bypassed the ConPTY stream")
+		}
+		if code := waitTerminal(t, terminal); code != 0 {
+			t.Fatalf("exit code %d", code)
+		}
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	command := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestTerminalWindowsRedirectedParentHandles$")
+	command.Env = append(os.Environ(), helperEnv+"=1")
+	command.Stdin = strings.NewReader("")
+	var output bytes.Buffer
+	command.Stdout, command.Stderr = &output, &output
+	if err := command.Run(); err != nil {
+		t.Fatalf("redirected parent regression: %v: %s", err, output.String())
+	}
+	if strings.Contains(output.String(), marker) {
+		t.Fatal("ConPTY command leaked into its parent's standard output")
+	}
+}
 
 func TestTerminalWindowsInteractiveResizeAndExit(t *testing.T) {
 	if !TerminalSupported() {

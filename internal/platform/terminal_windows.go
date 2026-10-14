@@ -159,6 +159,9 @@ func startTerminal(ctx context.Context, o TerminalOptions) (Terminal, error) {
 	}
 	si := windows.StartupInfoEx{ProcThreadAttributeList: attrs.List()}
 	si.Cb = uint32(unsafe.Sizeof(si))
+	// Explicit NULL standard handles let ConPTY provide them. Without this flag,
+	// redirected parent handles can be copied despite inheritHandles=false.
+	si.Flags = windows.STARTF_USESTDHANDLES
 	t.job, err = windows.CreateJobObject(nil, nil)
 	if err != nil {
 		return nil, err
