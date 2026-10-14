@@ -49,7 +49,11 @@ func client(t *testing.T, ctx context.Context, key ssh.Signer, auth ssh.PublicKe
 			done <- e
 			return
 		}
-		done <- (&Server{Signer: host, AuthorizedKey: auth, WorkDir: dir}).ServeConn(ctx, c)
+		shell := "auto"
+		if runtime.GOOS != "windows" {
+			shell = "sh"
+		}
+		done <- (&Server{Signer: host, AuthorizedKey: auth, WorkDir: dir, Shell: shell}).ServeConn(ctx, c)
 	}()
 	c, e := ssh.Dial("tcp", ln.Addr().String(), &ssh.ClientConfig{User: "ignored-user", Auth: []ssh.AuthMethod{ssh.PublicKeys(key)}, HostKeyCallback: ssh.FixedHostKey(host.PublicKey()), Timeout: 5 * time.Second})
 	if e != nil {
@@ -177,8 +181,8 @@ func TestStdinAndPTY(t *testing.T) {
 		t.Fatal(e)
 	}
 	defer s.Close()
-	if e = s.RequestPty("xterm", 24, 80, ssh.TerminalModes{}); e == nil {
-		t.Fatal("PTY accepted")
+	if e = s.RequestPty("xterm", 0, 80, ssh.TerminalModes{}); e == nil {
+		t.Fatal("invalid PTY dimensions accepted")
 	}
 	s.Stdin = strings.NewReader("input中文")
 	out, e := s.Output("cat")

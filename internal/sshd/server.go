@@ -13,8 +13,8 @@ import (
 	"time"
 
 	"github.com/Boulea7/shellpier/internal/platform"
-	"github.com/pkg/sftp"
 	"golang.org/x/crypto/ssh"
+	"os"
 )
 
 const MaxCommandBytes = 64 * 1024
@@ -71,7 +71,7 @@ func (s *Server) ServeConn(ctx context.Context, conn net.Conn) error {
 	if err := conn.SetDeadline(time.Time{}); err != nil {
 		return fmt.Errorf("clear SSH handshake deadline: %w", err)
 	}
-	go ssh.DiscardRequests(reqs)
+	go s.globalRequests(reqs)
 	var wg sync.WaitGroup
 	sem := make(chan struct{}, MaxSessions)
 	for nc := range chans {
@@ -97,56 +97,10 @@ func (s *Server) ServeConn(ctx context.Context, conn net.Conn) error {
 	wg.Wait()
 	return sc.Wait()
 }
-func (s *Server) session(ctx context.Context, ch ssh.Channel, reqs <-chan *ssh.Request) {
-	defer ch.Close()
-	for req := range reqs {
-		switch req.Type {
-		case "pty-req":
-			io.WriteString(ch.Stderr(), "PTY is unsupported; use non-interactive SSH exec commands.\n")
-			req.Reply(false, nil)
-		case "exec":
-			var payload struct{ Command string }
-			e := ssh.Unmarshal(req.Payload, &payload)
-			if e != nil || len(payload.Command) == 0 || len(payload.Command) > MaxCommandBytes {
-				req.Reply(false, nil)
-				continue
-			}
-			req.Reply(true, nil)
-			execCtx, cancel := context.WithCancel(ctx)
-			defer cancel()
-			go func() { ssh.DiscardRequests(reqs); cancel() }()
-			s.execute(execCtx, ch, payload.Command)
-			return
-		case "subsystem":
-			var payload struct{ Name string }
-			if ssh.Unmarshal(req.Payload, &payload) != nil || payload.Name != "sftp" {
-				req.Reply(false, nil)
-				continue
-			}
-			srv, e := sftp.NewServer(ch, sftp.WithServerWorkingDirectory(s.WorkDir))
-			if e != nil {
-				req.Reply(false, nil)
-				return
-			}
-			req.Reply(true, nil)
-			go ssh.DiscardRequests(reqs)
-			e = srv.Serve()
-			srv.Close()
-			status := uint32(0)
-			if e != nil && e != io.EOF {
-				status = 1
-			}
-			sendStatus(ch, status)
-			return
-		default:
-			req.Reply(false, nil)
-		}
-	}
-}
 func sendStatus(ch ssh.Channel, status uint32) {
 	ch.SendRequest("exit-status", false, ssh.Marshal(struct{ Status uint32 }{status}))
 }
-func (s *Server) execute(ctx context.Context, ch ssh.Channel, command string) {
+func (s *Server) execute(ctx context.Context, ch ssh.Channel, command string, env []string) {
 	cmd, e := platform.Command(s.Shell, command, s.WorkDir)
 	if e != nil {
 		io.WriteString(ch.Stderr(), e.Error()+"\n")
@@ -159,6 +113,7 @@ func (s *Server) execute(ctx context.Context, ch ssh.Channel, command string) {
 		sendStatus(ch, 127)
 		return
 	}
+	cmd.Env = mergeEnvironment(os.Environ(), env)
 	cmd.WaitDelay = time.Second
 	cmd.Stdout = ch
 	cmd.Stderr = ch.Stderr()
