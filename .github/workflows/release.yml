@@ -24,10 +24,15 @@ jobs:
           python-version: '3.x'
       - run: go test ./...
       - run: python scripts/validate_skills.py
+      - run: python scripts/validate_docs.py
       - name: Build offline archives
         env:
           RELEASE_VERSION: ${{ inputs.version || github.ref_name }}
         run: python scripts/package.py --version "$RELEASE_VERSION"
+      - name: Record source and verify archive checksums
+        run: |
+          git rev-parse HEAD > dist/source-commit.txt
+          (cd dist && sha256sum --check checksums.txt)
       - uses: actions/upload-artifact@v7.0.2
         with:
           name: shellpier-release
@@ -50,4 +55,6 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ github.ref_name }}
         run: |
+          (cd dist && sha256sum --check checksums.txt)
+          test "$(cat dist/source-commit.txt)" = "$(git rev-parse HEAD)"
           gh release create "$RELEASE_TAG" dist/* --verify-tag --draft --prerelease --title "ShellPier $RELEASE_TAG" --notes-file CHANGELOG.md
