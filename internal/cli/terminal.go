@@ -131,7 +131,7 @@ func terminalReplacePrivate(path string, value any) error {
 	if err := checkPrivateSessionDir(filepath.Dir(path)); err != nil {
 		return err
 	}
-	old, err := os.Lstat(path)
+	old, err := terminalFileIdentity(path)
 	if err != nil {
 		return err
 	}
@@ -147,11 +147,24 @@ func terminalReplacePrivate(path string, value any) error {
 		return err
 	}
 	defer os.Remove(tmp)
-	current, err := os.Lstat(path)
-	if err != nil || !os.SameFile(old, current) {
-		return errors.New("terminal state changed unexpectedly")
+	// Local persistence may contend with a Windows reader that denies delete sharing.
+	// Retry only the rename, never the already acknowledged remote operation.
+	deadline := time.Now().Add(time.Second)
+	for {
+		current, e := terminalFileIdentity(path)
+		if e != nil || !os.SameFile(old, current) {
+			return errors.New("terminal state changed unexpectedly")
+		}
+		if e = checkPrivateSessionFile(path); e != nil {
+			return e
+		}
+		err = os.Rename(tmp, path)
+		if err == nil || !terminalRetryReplace(err) || !time.Now().Before(deadline) {
+			return err
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
-	return os.Rename(tmp, path)
+
 }
 func terminalOpen(ctx context.Context, args []string, stdout, stderr io.Writer) (result error) {
 	f := flags("terminal open", stderr)
@@ -203,7 +216,7 @@ func terminalOpen(ctx context.Context, args []string, stdout, stderr io.Writer) 
 	if err = os.Mkdir(path, 0700); err != nil {
 		return fmt.Errorf("create new terminal directory: %w", err)
 	}
-	created, err := os.Lstat(path)
+	created, err := terminalFileIdentity(path)
 	if err != nil {
 		return err
 	}
@@ -236,11 +249,11 @@ func terminalOpen(ctx context.Context, args []string, stdout, stderr io.Writer) 
 	if err = writeJSONPrivate(statePath, state); err != nil {
 		return err
 	}
-	knownFiles["state.json"], _ = os.Lstat(statePath)
+	knownFiles["state.json"], _ = terminalFileIdentity(statePath)
 	if err = writeJSONPrivate(filepath.Join(path, "config.json"), terminalConfig{Ticket: ticket, Interface: *iface, Retry: *retry, Env: env}); err != nil {
 		return err
 	}
-	knownFiles["config.json"], _ = os.Lstat(filepath.Join(path, "config.json"))
+	knownFiles["config.json"], _ = terminalFileIdentity(filepath.Join(path, "config.json"))
 	executable, err := os.Executable()
 	if err != nil {
 		return err
@@ -335,7 +348,7 @@ func terminalOpen(ctx context.Context, args []string, stdout, stderr io.Writer) 
 	return err
 }
 func terminalRemoveStartup(dir string, created os.FileInfo, known map[string]os.FileInfo, expected terminalState) {
-	current, err := os.Lstat(dir)
+	current, err := terminalFileIdentity(dir)
 	if err != nil || !os.SameFile(created, current) {
 		return
 	}
@@ -344,7 +357,7 @@ func terminalRemoveStartup(dir string, created os.FileInfo, known map[string]os.
 		if checkPrivateSessionFile(path) != nil {
 			continue
 		}
-		before, err := os.Lstat(path)
+		before, err := terminalFileIdentity(path)
 		if err != nil {
 			continue
 		}
@@ -357,7 +370,7 @@ func terminalRemoveStartup(dir string, created os.FileInfo, known map[string]os.
 			snapshot, e := terminalSnapshotFile(path)
 			owned = e == nil && expected.ID != "" && snapshot.SessionID == expected.ID
 		}
-		after, err := os.Lstat(path)
+		after, err := terminalFileIdentity(path)
 		if owned && err == nil && os.SameFile(before, after) {
 			os.Remove(path)
 		}

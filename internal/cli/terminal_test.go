@@ -364,8 +364,8 @@ func TestTerminalServePrivateHandshakeAndTTL(t *testing.T) {
 func TestTerminalStartupCleanupPreservesReplacedPrivateFiles(t *testing.T) {
 	state, path := terminalTestState(t)
 	dir := filepath.Dir(path)
-	created, _ := os.Lstat(dir)
-	original, _ := os.Lstat(path)
+	created, _ := terminalFileIdentity(dir)
+	original, _ := terminalFileIdentity(path)
 	known := map[string]os.FileInfo{"state.json": original}
 	replacement := filepath.Join(dir, "replacement.json")
 	if err := writePrivate(replacement, []byte(`{"unrelated":"keep"}`)); err != nil {
@@ -718,5 +718,69 @@ func TestTerminalLargeEscapedSetupConfiguration(t *testing.T) {
 	}
 	if starts.Load() != 1 {
 		t.Fatal("large command replayed")
+	}
+}
+
+func TestTerminalFileIdentityRemainsFrozenAfterReplacement(t *testing.T) {
+	_, path := terminalTestState(t)
+	original, err := terminalFileIdentity(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	replacement := filepath.Join(filepath.Dir(path), "replacement.json")
+	if err = writePrivate(replacement, []byte(`{"unrelated":"keep"}`)); err != nil {
+		t.Fatal(err)
+	}
+	if err = os.Rename(replacement, path); err != nil {
+		t.Fatal(err)
+	}
+	current, err := terminalFileIdentity(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if os.SameFile(original, current) {
+		t.Fatal("captured identity followed replacement path")
+	}
+}
+func TestTerminalWindowsStateUpdateWaitsForReader(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("Windows delete-sharing behavior")
+	}
+	state, path := terminalTestState(t)
+	reader, err := os.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reader.Close()
+	probe := filepath.Join(filepath.Dir(path), "probe.json")
+	if err = writeJSONPrivate(probe, state); err != nil {
+		t.Fatal(err)
+	}
+	if err = os.Rename(probe, path); err == nil {
+		t.Fatal("fixture reader did not prevent replacement")
+	} else if !terminalRetryReplace(err) {
+		t.Fatalf("unexpected native rename denial: %v", err)
+	}
+	state.Cols = 91
+	state.Rows = 37
+	done := make(chan error, 1)
+	go func() { done <- terminalReplacePrivate(path, state) }()
+	select {
+	case err = <-done:
+		t.Fatalf("update completed while destination reader denied delete: %v", err)
+	case <-time.After(100 * time.Millisecond):
+	}
+	reader.Close()
+	select {
+	case err = <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("bounded update failed to recover after reader released")
+	}
+	updated, err := terminalReadState(path, true)
+	if err != nil || updated.Cols != 91 || updated.Rows != 37 {
+		t.Fatalf("state update lost or invalid: %v", err)
 	}
 }
