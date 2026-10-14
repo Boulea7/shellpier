@@ -33,6 +33,7 @@ Lifecycle and diagnostics:
   shellpier cleanup --dir GENERATED-SSH-CONFIG-DIRECTORY
   shellpier relay --init-key NEW-FILE
   shellpier relay --token-file FILE [--listen 127.0.0.1:8080]
+  shellpier completion bash|zsh|fish|powershell
 
 Default: foreground, one-hour lifetime, current user's permissions.
 Direct mode needs peer reachability; campus/hotspot NAT usually needs a relay.
@@ -80,6 +81,8 @@ func Run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 		return transfer(ctx, args[0], args[1:], stdout, stderr)
 	case "keygen":
 		return keygen(args[1:], stdout, stderr)
+	case "completion":
+		return completion(args[1:], stdout, stderr)
 	case "status", "stop":
 		return control(ctx, args[0], args[1:], stdout, stderr)
 	case "revoke":
