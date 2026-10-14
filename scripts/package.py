@@ -39,7 +39,7 @@ for system, arch in targets:
                 path = root/directory
                 if path.exists():
                     for file in sorted(path.rglob('*')):
-                        if file.is_file() and file.name != 'AGENTS.md' and '__pycache__' not in file.parts:
+                        if file.is_file() and file.name not in {'AGENTS.md', 'CLAUDE.md'} and '__pycache__' not in file.parts:
                             z.write(file,str(file.relative_to(root)))
         with tempfile.TemporaryDirectory(prefix='shellpier-docs-') as unpacked:
             with zipfile.ZipFile(archive) as z:

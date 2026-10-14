@@ -1,6 +1,6 @@
 # 如何添加新功能
 
-较大的 CLI、认证、平台或架构变化先开 Issue；协作约定见 [CONTRIBUTING](../CONTRIBUTING.md)。修改前读取所在模块的 `AGENTS.md`。
+较大的 CLI、认证、平台或架构变化先开 Issue；协作约定见 [CONTRIBUTING](../CONTRIBUTING.md)。修改前读取所在模块的 `AGENTS.md`。Claude Code 通过同目录的 `CLAUDE.md` 导入这些规则，共享约定只维护一份。
 
 ## 仓库地图
 
