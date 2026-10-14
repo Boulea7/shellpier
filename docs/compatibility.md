@@ -8,7 +8,7 @@
 
 | 环境 | ShellPier 入口 | 条件与边界 |
 |---|---|---|
-| Windows 10/11 | 原生 `shellpier.exe`，amd64/386/arm64 包 | 当前用户执行，无需系统 sshd；选与系统架构匹配的包 |
+| Windows 10/11 | 原生 `shellpier.exe`，amd64/386/arm64 包 | 当前用户执行，无需系统 sshd；PTY 需要 Windows 10 1809+ 的 ConPTY，较早 Windows 10 使用 exec/SFTP |
 | Linux | 原生程序，amd64/arm64 包 | Go 1.26 的内核最低要求为 3.2；裁剪系统还需满足运行时要求；WSL1 不在 Go 支持范围内 |
 | macOS | `darwin` 包，amd64/arm64 | 使用 Go 1.27.2 构建的发行包最低 macOS 13；Go 1.26 源码构建的工具链下限为 macOS 12，需另行测试 |
 | Windows 7 SP1/8 | `legacy/shellpier.cmd` | 独立 Windows PowerShell 2.0/.NET 3.5 路线；Bitvise 9.66；管理员、适用许可和可信签名；尚未完成 Win7/8 实机测试 |
@@ -22,7 +22,7 @@
 
 | 路线 | 实现状态 | 用户仍须提供 |
 |---|---|---|
-| Modern direct | 内置 SSH exec/SFTP，临时公钥、固定主机公钥、TTL、stop | 允许入站的实际网络路径；无需手输目标 OS 用户名 |
+| Modern direct | 内置 SSH exec/SFTP、PTY、临时公钥、固定主机公钥、TTL、stop | 允许入站的实际网络路径；无需手输目标 OS 用户名 |
 | Modern WSS relay | 双方主动出站、host/client 角色分离、连接配对、撤销 | 可信 HTTPS 中继 URL 与创建密钥；无预置免费公共中继 |
 | Modern invite | 控制端保留私钥，只发送 host ticket | 授权的私下传递渠道；目标机仍须运行 host |
 | OpenSSH-compatible Agent | 生成独立 SSH config/identity/known_hosts，ProxyCommand 使用 ShellPier | Agent 支持 OpenSSH 配置并能找到本地可执行文件 |
@@ -34,13 +34,17 @@
 
 ## 执行与撤销
 
-会话默认 TTL 为 3 小时。当前版本提供当前用户的命令执行和 SFTP；不提供 PTY、桌面控制、系统用户切换或 PAM 登录。访问密钥授予该进程所属账户的执行能力，目录设置不是文件系统沙箱。
+会话默认 TTL 为 3 小时。当前版本提供当前用户的命令执行、SFTP 与 PTY；不提供桌面控制、系统用户切换或 PAM 登录。Unix 使用系统 PTY，Windows 使用 ConPTY；目标是否可用以 `capabilities` 返回为准，Legacy 不提供本项目的 PTY 入口。访问密钥授予该进程所属账户的执行能力，目录设置不是文件系统沙箱。
+
+`capabilities` 的 `pty_signals` 列出目标支持的信号。Windows 的 `INT` 向终端写入 Ctrl+C，由前台程序处理；`TERM` / `KILL` 终止受管理的 Job。普通 `exec` 不提供会话信号接口，可用超时或关闭连接结束。
 
 正常停止、TTL 或会话关闭会撤销访问并清理受管理的命令进程树。Windows 使用 Job Object；Unix 使用独立进程组。Unix 子进程若主动通过 `setsid` 等方式逃离进程组，不能保证一并终止。这是合作式工具管理边界，不能用来隔离恶意命令。
 
 `cleanup` 只删除生成目录清单中属于本会话的凭据文件，保留无关文件；它不撤销运行中的会话。stop/TTL 不回滚已写入文件、部署或其他命令副作用，不删除系统/网络审计记录。SIGKILL、崩溃或断电可能留下状态或凭据；恢复后须检查原资源与已执行操作。Relay 重启会丢失内存会话。Legacy 的保护状态与计划任务具有不同生命周期，仍受系统时钟、供电和调度服务影响。
 
 `--keep-awake` 自愿启用。macOS 使用 `caffeinate`，Linux 使用 `systemd-inhibit`，依赖本机工具、服务和权限，属于尽力而为；Windows 使用 `SetThreadExecutionState`，不修改电源计划。它不保证阻止关机、强制睡眠或用户合盖行为。
+
+交互终端合并 stdout/stderr，输出可能包含控制序列和回显。Agent 持久终端在控制端保存最多 1 MiB 私有输出快照，可能包含敏感内容；关闭或到期后仍可读取，结束后自行删除。终端关闭不撤销分享，也不回滚已执行命令。
 
 ## 网络条件
 

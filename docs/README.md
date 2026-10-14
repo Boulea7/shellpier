@@ -8,8 +8,8 @@
 |---|---|
 | 选择安装包或离线复制 | [安装](install.md) |
 | 单机演练、局域网或校园网连接 | [使用场景](workflows.md) |
-| 查询参数、传文件、生成密钥 | [命令手册](commands.md) |
-| 给 Codex / Claude Code 提供操作指引 | [Agent skill](../skills/shellpier/SKILL.md) |
+| 执行命令、交互终端、传文件与查询参数 | [命令手册](commands.md) |
+| 给 Codex / Claude Code 使用 exec、terminal 与机器接口 | [Agent skill](../skills/shellpier/SKILL.md) |
 | 使用 Windows 7 / 8 | [Legacy Windows](legacy-windows.md) |
 | 诊断连接失败 | [排障](troubleshooting.md) · [常见问题](faq.md) |
 
@@ -22,7 +22,7 @@ flowchart LR
     Agent -. SSH 端到端加密 .-> Host
 ```
 
-双方主动连接中继，SSH 命令与文件在两端之间加密；中继负责配对连接。局域网模式可直接连接目标机。
+双方主动连接中继，SSH 命令、终端与文件在两端之间加密；中继负责配对连接。局域网模式可直接连接目标机。
 
 - [中继部署](relay.md)：本地演练、TLS、容器与运行限制。
 - [兼容性](compatibility.md)：系统要求、已测试的平台与会话结束行为。

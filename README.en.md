@@ -33,12 +33,14 @@ On a network where the two computers can reach each other:
 
 On macOS/Linux, replace `.\shellpier.exe` with `./shellpier`. `access.json` grants access; share it only with the intended person or agent.
 
+For an interactive terminal, use `shellpier shell @access.json`. Agents can use `shellpier --json exec @access.json --command whoami` and discover interfaces with `shellpier --json schema`.
+
 Across NAT, including many campus and hotspot networks, configure your own or your team's [relay](docs/relay.md). See the [workflows](docs/workflows.md) for more examples.
 
 ## Documentation and contributions
 
 [Documentation](docs/README.md) · [Commands](docs/commands.md) · [Troubleshooting](docs/troubleshooting.md) · [Development](docs/development.md) · [Contribute](CONTRIBUTING.md) · [Get help](SUPPORT.md)
 
-Supports command execution and SFTP, without interactive terminals or desktop control. See the [security policy](SECURITY.en.md). Detailed manuals are currently in Chinese.
+Supports command execution, interactive terminals and SFTP. Desktop control is not available. See the [security policy](SECURITY.en.md). Detailed manuals are currently in Chinese.
 
 MIT © [Boulea7](https://github.com/Boulea7)

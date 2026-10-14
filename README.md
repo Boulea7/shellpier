@@ -33,12 +33,14 @@ ShellPier 让自己的 AI Agent 临时执行另一台电脑上的命令、传输
 
 macOS/Linux 把 `.\shellpier.exe` 换成 `./shellpier`。`access.json` 是私密凭据，请仅交给需要连接的人或 Agent。
 
+交互操作用 `shellpier shell @access.json`；Agent 可用 `shellpier --json exec @access.json --command whoami`，接口查询用 `shellpier --json schema`。
+
 跨校园网、热点等 NAT 网络时，需要配置自己的或团队的[中继](docs/relay.md)。更多用法见[使用场景](docs/workflows.md)。
 
 ## 文档与贡献
 
 [文档首页](docs/README.md) · [命令](docs/commands.md) · [排障](docs/troubleshooting.md) · [开发指南](docs/development.md) · [参与贡献](CONTRIBUTING.md) · [获取帮助](SUPPORT.md)
 
-支持命令执行和 SFTP，暂不提供交互终端或桌面控制。[安全说明](SECURITY.md)
+支持命令执行、交互终端和 SFTP；不提供桌面控制。[安全说明](SECURITY.md)
 
 MIT © [Boulea7](https://github.com/Boulea7)

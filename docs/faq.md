@@ -12,11 +12,15 @@
 
 ### Codex / Claude Code 怎么连接？
 
-生成 `ssh-config` 后，将该配置交给支持 OpenSSH 的工具；也可调用内置 `check`、`connect`、`upload` 和 `download`。安装仓库中的 [skill](../skills/shellpier/SKILL.md) 后，确认 Agent 实际发现了它。
+先用 `schema --json` 发现命令，再用 `capabilities @access.json --json` 查询目标。一次命令使用 `exec --json`；需要保留交互上下文时使用 `terminal open/read/write/close`。也可生成 `ssh-config` 交给支持 OpenSSH 的工具。参数见[命令手册](commands.md)，安装仓库中的 [skill](../skills/shellpier/SKILL.md) 后确认 Agent 已加载。
 
-### 为什么不能像普通 ssh 一样打开交互终端？
+### 怎么打开交互终端？
 
-当前提供 exec 与 SFTP，还没有 PTY。需要交互终端或图形桌面时，使用符合目标系统与网络条件的[其他工具](research.md)。
+运行 `shell @access.json`。目标需要支持 PTY；Windows 要求 10 1809+，旧 Windows 10 仍可执行命令和传文件。Legacy 使用独立流程。PTY 输出合并 stdout/stderr，Agent 获取结构化结果时用 `exec --json`。
+
+### 终端关闭后，输出与分享会话还在吗？
+
+`terminal close` 只关闭该终端；目标分享仍需 stop/revoke。终端的有界私有输出快照保留供 read/status 查询，结束后删除本次终端目录。状态文件包含 secret，不能公开；停止操作不回滚远端命令。
 
 ### 文件传输中断怎么办？
 

@@ -42,7 +42,7 @@ PowerShell 的终端 B 写法：
 ./shellpier share --relay= --listen 0.0.0.0:0 --ttl 15m --output access.json --json
 ```
 
-输出包括候选地址、期限、状态路径。把 `access.json` 私下复制到控制端；控制端执行 `connect @access.json -- whoami`。
+输出包括候选地址、期限、状态路径。把 `access.json` 私下复制到控制端；控制端先执行 `connect @access.json -- whoami`，需要交互时运行 `shell @access.json`。
 
 连接失败或有多张网卡时，可按需从 `doctor` 查出名称：目标端 `share --interface NAME` 只筛选公布地址，`--listen` 仍控制实际监听；macOS/Linux 控制端可用 `connect --interface NAME @access.json -- whoami` 约束出站网卡。不要照抄别人的网卡名。Windows 控制端暂不支持接口约束。
 
@@ -68,7 +68,7 @@ PowerShell 的终端 B 写法：
 
 ```sh
 ./shellpier connect @invitation/access.json -- hostname
-./shellpier connect @invitation/access.json -- whoami
+./shellpier shell @invitation/access.json
 ssh -F ./invitation/ssh_config shellpier hostname
 sftp -F ./invitation/ssh_config shellpier
 ```
@@ -84,6 +84,26 @@ sftp -F ./invitation/ssh_config shellpier
 ```
 
 确认中间的新连接被拒绝，再清理凭据。若撤销未确认，保留票据用于重试。`cleanup` 保留目录中的无关文件，只清理清单所属凭据；它不能替代撤销。
+
+## 人工操作与 Agent 自动化
+
+有访问文件后，人工操作直接打开终端：
+
+```sh
+./shellpier shell @access.json
+```
+
+Agent 先发现命令，再查询目标能力，执行一次有界命令：
+
+```sh
+./shellpier schema --json
+./shellpier capabilities @access.json --json
+./shellpier exec @access.json --command 'whoami' --timeout 30s --no-stdin --json
+```
+
+需要连续终端上下文时使用 `terminal open → read → write`，结束后 close；读写、光标、尺寸和信号参数见[命令手册](commands.md#agent-发现与持久终端)。优先用 `exec --json` 获取独立 stdout/stderr 与退出码，PTY 输出包含回显和控制序列。跨调用的终端状态文件与输出快照留在控制端，私下保管。
+
+文件管理用 `files`，上传下载仍用 `upload` / `download`；用 `sessions --json` 查找本机分享会话，再按返回的 state 路径执行 status/stop。关闭终端不会撤销目标分享，会话结束仍需 stop/revoke。
 
 ## Windows 目标与文件传输
 
