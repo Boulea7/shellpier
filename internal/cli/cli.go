@@ -34,6 +34,7 @@ Lifecycle and diagnostics:
   shellpier relay --init-key NEW-FILE
   shellpier relay --token-file FILE [--listen 127.0.0.1:8080]
   shellpier completion bash|zsh|fish|powershell
+  shellpier version [--json]
 
 Default: foreground, one-hour lifetime, current user's permissions.
 Direct mode needs peer reachability; campus/hotspot NAT usually needs a relay.
@@ -59,8 +60,7 @@ func Run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 		_, err := io.WriteString(stdout, help)
 		return err
 	case "version", "--version":
-		_, err := fmt.Fprintln(stdout, "shellpier", version)
-		return err
+		return printVersion(args[1:], stdout, stderr, version)
 	case "share":
 		return share(ctx, args[1:], stdout, stderr)
 	case "host":
