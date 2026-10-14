@@ -186,6 +186,7 @@ func readIdentity(client *ssh.Client, command string) (string, error) {
 func check(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	input, args := ticketArgument(args)
 	f := flags("check", stderr)
+	retry := clientRetryFlags(f)
 	asJSON := f.Bool("json", false, "print SSH and identity check results")
 	timeout := f.Duration("timeout", 20*time.Second, "total SSH and identity check timeout")
 	iface := f.String("interface", "", "constrain direct TCP routing to this interface")
@@ -199,6 +200,9 @@ func check(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	}
 	if input == "" || *timeout < time.Second || *timeout > 5*time.Minute {
 		return errors.New("usage: shellpier check TICKET [--timeout 20s] [--interface NAME] [--json]")
+	}
+	if err := retry.Validate(); err != nil {
+		return err
 	}
 	result := checkResult{}
 	fail := func(message string) error {
@@ -225,7 +229,7 @@ func check(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	result.HostKeySHA256 = summary.HostKeySHA256
 	runCtx, cancel := context.WithTimeout(ctx, *timeout)
 	defer cancel()
-	client, e := access.Dial(runCtx, ticket, *iface)
+	client, e := access.DialRetry(runCtx, ticket, *iface, *retry)
 	if e != nil {
 		if runCtx.Err() != nil {
 			return fail("SSH check timed out or was canceled")

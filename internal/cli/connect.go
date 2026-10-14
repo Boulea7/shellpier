@@ -13,6 +13,10 @@ import (
 
 func connect(ctx context.Context, mode string, args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 	f := flags(mode, stderr)
+	var retry *access.RetryOptions
+	if mode != "proxy" {
+		retry = clientRetryFlags(f)
+	}
 	iface := f.String("interface", "", "constrain direct TCP routing to this interface (macOS/Linux)")
 	if err := f.Parse(args); err != nil {
 		return err
@@ -33,6 +37,9 @@ func connect(ctx context.Context, mode string, args []string, stdin io.Reader, s
 		}
 		return access.Proxy(ctx, t, *iface, stdin, stdout)
 	}
+	if err := retry.Validate(); err != nil {
+		return err
+	}
 	commands := f.Args()[1:]
 	if len(commands) > 0 && commands[0] == "--" {
 		commands = commands[1:]
@@ -41,7 +48,7 @@ func connect(ctx context.Context, mode string, args []string, stdin io.Reader, s
 	if command == "" {
 		command = "whoami"
 	}
-	client, err := access.Dial(ctx, t, *iface)
+	client, err := access.DialRetry(ctx, t, *iface, *retry)
 	if err != nil {
 		return err
 	}

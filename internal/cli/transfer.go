@@ -17,6 +17,7 @@ import (
 
 func transfer(parent context.Context, command string, args []string, stdout, stderr io.Writer) error {
 	f := flags(command, stderr)
+	retry := clientRetryFlags(f)
 	iface := f.String("interface", "", "direct network interface")
 	timeout := f.Duration("timeout", 5*time.Minute, "maximum transfer duration")
 	asJSON := f.Bool("json", false, "emit transferred byte count as JSON")
@@ -38,6 +39,9 @@ func transfer(parent context.Context, command string, args []string, stdout, std
 			return errors.New("source and destination paths must be nonempty and contain no NUL")
 		}
 	}
+	if err := retry.Validate(); err != nil {
+		return err
+	}
 	ticket, err := access.Read(positional[0])
 	if err != nil {
 		return err
@@ -47,7 +51,7 @@ func transfer(parent context.Context, command string, args []string, stdout, std
 	}
 	ctx, cancel := context.WithTimeout(parent, *timeout)
 	defer cancel()
-	client, err := access.Dial(ctx, ticket, *iface)
+	client, err := access.DialRetry(ctx, ticket, *iface, *retry)
 	if err != nil {
 		return err
 	}
