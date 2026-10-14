@@ -5,4 +5,4 @@ contact_links:
     about: 认证、越权、凭据泄漏或撤销失效等问题请私密提交，勿公开利用细节。
   - name: 使用帮助与排障
     url: https://github.com/Boulea7/shellpier/blob/main/SUPPORT.md
-    about: 先确认版本与失败层级；项目不提供紧急值守服务。
+    about: 连接、安装与命令问题请参阅排障指南。

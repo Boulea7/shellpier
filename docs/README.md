@@ -6,7 +6,7 @@
 
 | 你想做什么 | 从这里开始 |
 |---|---|
-| 选择安装包、校验或离线复制 | [安装](install.md) |
+| 选择安装包或离线复制 | [安装](install.md) |
 | 单机演练、局域网或校园网连接 | [使用场景](workflows.md) |
 | 查询参数、传文件、生成密钥 | [命令手册](commands.md) |
 | 给 Codex / Claude Code 提供操作指引 | [Agent skill](../skills/shellpier/SKILL.md) |
@@ -25,7 +25,7 @@ flowchart LR
 双方主动连接中继，SSH 命令与文件在两端之间加密；中继负责配对连接。局域网模式可直接连接目标机。
 
 - [中继部署](relay.md)：本地演练、TLS、容器与运行限制。
-- [兼容性](compatibility.md)：平台下限、已验收范围与生命周期。
+- [兼容性](compatibility.md)：系统要求、已测试的平台与会话结束行为。
 - [方案调研](research.md)：同类工具与故障经验。
 - [安全策略](../SECURITY.md)：权限模型与漏洞报告。
 

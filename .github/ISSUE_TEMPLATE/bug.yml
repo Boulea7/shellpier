@@ -31,11 +31,11 @@ body:
     attributes:
       label: 连接方式
       options:
-        - Modern direct
-        - Modern WSS relay / invite
+        - 直接连接
+        - 通过中继或邀请连接
         - 生成的 OpenSSH / SFTP 配置
-        - Legacy Bitvise direct
-        - Legacy Plink reverse 指南
+        - 旧版 Windows：Bitvise 直连
+        - 旧版 Windows：Plink 反向连接
         - 安装 / 打包 / 其他
     validations:
       required: true

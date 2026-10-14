@@ -6,14 +6,14 @@ body:
     id: usecase
     attributes:
       label: 使用场景与当前问题
-      description: 谁在什么条件下遇到问题？使用泛化环境，不含真实个人标识。
+      description: 谁在什么条件下遇到问题？请勿填写个人信息或凭据。
     validations:
       required: true
   - type: textarea
     id: outcome
     attributes:
       label: 希望实现的行为
-      description: 描述可观察的结果和边界，而非仅给出技术方案。
+      description: 描述你希望怎样使用这个功能。
     validations:
       required: true
   - type: textarea
@@ -35,5 +35,5 @@ body:
     attributes:
       label: 公开提交确认
       options:
-        - label: 我已移除秘密和个人信息，理解建议不构成实现或交付时限承诺。
+        - label: 我已移除凭据和个人信息。
           required: true
