@@ -108,7 +108,7 @@ func inspect(args []string, stdout, stderr io.Writer) error {
 	input, args := ticketArgument(args)
 	f := flags("inspect", stderr)
 	asJSON := f.Bool("json", false, "print a credential-free ticket summary")
-	if e := f.Parse(args); e != nil {
+	if e := parseFlags(f, args); e != nil {
 		return e
 	}
 	if input == "" && f.NArg() == 1 {
@@ -190,7 +190,7 @@ func check(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	asJSON := f.Bool("json", false, "print SSH and identity check results")
 	timeout := f.Duration("timeout", 20*time.Second, "total SSH and identity check timeout")
 	iface := f.String("interface", "", "constrain direct TCP routing to this interface")
-	if e := f.Parse(args); e != nil {
+	if e := parseFlags(f, args); e != nil {
 		return e
 	}
 	if input == "" && f.NArg() == 1 {
@@ -205,18 +205,21 @@ func check(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		return err
 	}
 	result := checkResult{}
-	fail := func(message string) error {
+	fail := func(message string, cause ...error) error {
 		result.Error = message
 		if *asJSON {
 			if e := inspectionJSON(stdout, result); e != nil {
 				return e
 			}
 		}
+		if len(cause) != 0 && cause[0] != nil {
+			return fmt.Errorf("%s: %w", message, cause[0])
+		}
 		return errors.New(message)
 	}
 	ticket, e := access.Read(input)
 	if e != nil {
-		return fail("invalid, expired, or unreadable access ticket")
+		return fail("invalid, expired, or unreadable access ticket", e)
 	}
 	if ticket.Validate("access") != nil {
 		return fail("requires a valid access ticket")
@@ -232,24 +235,24 @@ func check(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	client, e := access.DialRetry(runCtx, ticket, *iface, *retry)
 	if e != nil {
 		if runCtx.Err() != nil {
-			return fail("SSH check timed out or was canceled")
+			return fail("SSH check timed out or was canceled", runCtx.Err())
 		}
-		return fail("SSH authentication or connection failed")
+		return fail("SSH check failed", e)
 	}
 	defer client.Close()
 	result.Hostname, e = readIdentity(client, "hostname")
 	if e != nil {
 		if runCtx.Err() != nil {
-			return fail("SSH check timed out or was canceled")
+			return fail("SSH check timed out or was canceled", runCtx.Err())
 		}
-		return fail("remote hostname check failed")
+		return fail("remote hostname check failed", e)
 	}
 	result.User, e = readIdentity(client, "whoami")
 	if e != nil {
 		if runCtx.Err() != nil {
-			return fail("SSH check timed out or was canceled")
+			return fail("SSH check timed out or was canceled", runCtx.Err())
 		}
-		return fail("remote account check failed")
+		return fail("remote account check failed", e)
 	}
 	result.OK = true
 	if *asJSON {

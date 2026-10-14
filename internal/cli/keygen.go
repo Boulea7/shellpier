@@ -25,7 +25,7 @@ func keygen(args []string, stdout, stderr io.Writer) error {
 	f := flags("keygen", stderr)
 	out := f.String("out", "", "new private output directory; parent must exist")
 	asJSON := f.Bool("json", false, "emit key paths and SHA256 fingerprint as JSON")
-	if err := f.Parse(args); err != nil {
+	if err := parseFlags(f, args); err != nil {
 		return err
 	}
 	if *out == "" || f.NArg() != 0 {

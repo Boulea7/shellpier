@@ -22,7 +22,7 @@ type buildVersion struct {
 func printVersion(args []string, stdout, stderr io.Writer, version string) error {
 	f := flags("version", stderr)
 	asJSON := f.Bool("json", false, "print version and build metadata")
-	if err := f.Parse(args); err != nil {
+	if err := parseFlags(f, args); err != nil {
 		return err
 	}
 	if f.NArg() != 0 {

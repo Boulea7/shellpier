@@ -21,16 +21,10 @@ func transfer(parent context.Context, command string, args []string, stdout, std
 	iface := f.String("interface", "", "direct network interface")
 	timeout := f.Duration("timeout", 5*time.Minute, "maximum transfer duration")
 	asJSON := f.Bool("json", false, "emit transferred byte count as JSON")
-	// Permit the documented positional spelling followed by options.
-	var positional []string
-	for len(args) > 0 && !strings.HasPrefix(args[0], "-") {
-		positional = append(positional, args[0])
-		args = args[1:]
-	}
-	if err := f.Parse(args); err != nil {
+	if err := parseFlags(f, args); err != nil {
 		return err
 	}
-	positional = append(positional, f.Args()...)
+	positional := f.Args()
 	if len(positional) != 3 || *timeout <= 0 {
 		return fmt.Errorf("usage: shellpier %s [--interface NAME] [--timeout 5m] [--json] TICKET SOURCE DESTINATION", command)
 	}

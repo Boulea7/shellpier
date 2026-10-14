@@ -21,7 +21,7 @@ func doctor(ctx context.Context, args []string, stdout, stderr io.Writer) error 
 	f := flags("doctor", stderr)
 	base := f.String("relay", os.Getenv("SHELLPIER_RELAY_URL"), "check the relay's HTTPS health endpoint")
 	asJSON := f.Bool("json", false, "machine-readable diagnostics")
-	if err := f.Parse(args); err != nil {
+	if err := parseFlags(f, args); err != nil {
 		return err
 	}
 	if f.NArg() != 0 {
