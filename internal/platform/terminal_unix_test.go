@@ -4,6 +4,7 @@ package platform
 
 import (
 	"context"
+	"fmt"
 	"os/exec"
 	"regexp"
 	"strconv"
@@ -12,6 +13,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/creack/pty"
 )
 
 func TestTerminalUnixInteractiveResizeAndExit(t *testing.T) {
@@ -23,15 +26,29 @@ func TestTerminalUnixInteractiveResizeAndExit(t *testing.T) {
 	}
 	defer term.Close()
 	output := captureTerminal(t, term)
-	if _, err := term.Write([]byte("stty size; printf '__INITIAL__\\n'\n")); err != nil {
+	const readyPrompt = "__NEXT_READY_PROMPT__ "
+	var encoded strings.Builder
+	for _, char := range []byte(readyPrompt) {
+		fmt.Fprintf(&encoded, "\\%03o", char)
+	}
+	// The builtin marker can precede readline's terminal restoration. Wait
+	// for the next prompt instead, without matching echoed command input.
+	initial := "stty size; printf '__INITIAL__\\n'; PS1=$(printf '" + encoded.String() + "')\n"
+	if strings.Contains(initial, readyPrompt) {
+		t.Fatal("readiness prompt was present in echoed input")
+	}
+	if _, err := term.Write([]byte(initial)); err != nil {
 		t.Fatal(err)
 	}
 	output.await(t, "__INITIAL__\r\n")
 	output.await(t, "24 80")
+	output.await(t, readyPrompt)
 	if err := term.Resize(100, 40); err != nil {
 		t.Fatal(err)
 	}
-	term.Write([]byte("stty size; printf '__RESIZED__\\n'; exit 7\n"))
+	if _, err := term.Write([]byte("stty size; printf '__RESIZED__\\n'; exit 7\n")); err != nil {
+		t.Fatal(err)
+	}
 	output.await(t, "40 100")
 	if code := waitTerminal(t, term); code != 7 {
 		t.Fatalf("exit code %d", code)
@@ -183,5 +200,36 @@ func TestTerminalUnixBackgroundJobsCancelled(t *testing.T) {
 	}
 	if err := syscall.Kill(unrelated.Process.Pid, 0); err != nil {
 		t.Fatalf("unrelated process was affected: %v", err)
+	}
+}
+
+func TestTerminalUnixResizeKernelWhileWaitingForInput(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	// Non-interactive read has no prompt/readline transition that can write
+	// its cached old winsize over the caller's resize.
+	terminal, err := StartTerminal(ctx, TerminalOptions{Shell: "sh", Command: "printf '__AWAIT_INPUT__\\n'; read answer; stty size; exit 7", Term: "xterm", Columns: 80, Rows: 24})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer terminal.Close()
+	output := captureTerminal(t, terminal)
+	output.await(t, "__AWAIT_INPUT__\r\n")
+	if err = terminal.Resize(100, 40); err != nil {
+		t.Fatal(err)
+	}
+	size, err := pty.GetsizeFull(terminal.(*unixTerminal).file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if size.Cols != 100 || size.Rows != 40 {
+		t.Fatal("kernel did not accept the requested terminal dimensions")
+	}
+	if _, err = terminal.Write([]byte("continue\n")); err != nil {
+		t.Fatal(err)
+	}
+	output.await(t, "40 100")
+	if code := waitTerminal(t, terminal); code != 7 {
+		t.Fatalf("exit code %d", code)
 	}
 }
