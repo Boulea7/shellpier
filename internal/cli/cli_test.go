@@ -268,7 +268,7 @@ func TestRelayInviteHostConnectRevoke(t *testing.T) {
 	if invoke(t, "connect", "@"+filepath.Join(generated, "access.json"), "--", outputCommand()) != "中文链路" {
 		t.Fatal("connect output mismatch")
 	}
-	invoke(t, "revoke", "@"+filepath.Join(generated, "host.ticket"))
+	invoke(t, "revoke", "--timeout", "10s", "@"+filepath.Join(generated, "host.ticket"))
 	awaitHost(t, done, state)
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()

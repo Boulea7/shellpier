@@ -22,7 +22,7 @@ Your AI Agent's computer:
   shellpier upload <access-ticket or @file> LOCAL REMOTE
   shellpier download <access-ticket or @file> REMOTE LOCAL
   shellpier keygen --out NEW-DIRECTORY [--json]
-  shellpier revoke <host-ticket or @file>
+  shellpier revoke <host-ticket or @file> [--timeout 10s]
 
 Lifecycle and diagnostics:
   shellpier doctor [--relay URL] [--json]
@@ -86,7 +86,7 @@ func Run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 	case "status", "stop":
 		return control(ctx, args[0], args[1:], stdout, stderr)
 	case "revoke":
-		return revoke(ctx, args[1:], stdout)
+		return revoke(ctx, args[1:], stdout, stderr)
 	case "cleanup":
 		return cleanup(args[1:], stdout, stderr)
 	case "relay":

@@ -71,18 +71,29 @@ func invite(ctx context.Context, args []string, stdout, stderr io.Writer) error 
 	return nil
 }
 
-func revoke(ctx context.Context, args []string, stdout io.Writer) error {
-	if len(args) != 1 {
-		return errors.New("usage: shellpier revoke HOST-TICKET")
+func revoke(ctx context.Context, args []string, stdout, stderr io.Writer) error {
+	input, args := ticketArgument(args)
+	f := flags("revoke", stderr)
+	timeout := f.Duration("timeout", 10*time.Second, "total revocation timeout")
+	if err := f.Parse(args); err != nil {
+		return err
 	}
-	t, err := access.Read(args[0])
+	if input == "" && f.NArg() == 1 {
+		input = f.Arg(0)
+	} else if f.NArg() != 0 {
+		return errors.New("revoke accepts exactly one host ticket")
+	}
+	if input == "" || *timeout < time.Second || *timeout > 5*time.Minute {
+		return errors.New("usage: shellpier revoke HOST-TICKET [--timeout 10s]; timeout must be 1s to 5m")
+	}
+	t, err := access.Read(input)
 	if err != nil {
 		return err
 	}
 	if err := t.Validate("host"); err != nil {
 		return err
 	}
-	c, cancel := context.WithTimeout(ctx, 10*time.Second)
+	c, cancel := context.WithTimeout(ctx, *timeout)
 	defer cancel()
 	if err := relay.Revoke(c, t.RelayURL, ticketSession(t)); err != nil {
 		return err

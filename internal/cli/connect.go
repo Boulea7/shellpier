@@ -57,10 +57,7 @@ func connect(ctx context.Context, mode string, args []string, stdin io.Reader, s
 
 // ssh-config permits the natural "ticket --out directory" spelling.
 func sshConfig(args []string, stdout, stderr io.Writer) error {
-	var ticketArg string
-	if len(args) > 0 && !strings.HasPrefix(args[0], "--") {
-		ticketArg, args = args[0], args[1:]
-	}
+	ticketArg, args := ticketArgument(args)
 	f := flags("ssh-config", stderr)
 	dir := f.String("out", "", "new private output directory")
 	if err := f.Parse(args); err != nil {

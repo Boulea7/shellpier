@@ -99,19 +99,13 @@ func summarizeTicket(t access.Ticket) (ticketSummary, error) {
 	}
 	return ticketSummary{Kind: t.Kind, ID: t.ID, Transport: transport, Addresses: t.Addresses, ExpiresAt: t.ExpiresAt, Persistent: t.ExpiresAt.IsZero(), Expired: !t.ExpiresAt.IsZero() && !time.Now().Before(t.ExpiresAt), HostKeySHA256: ssh.FingerprintSHA256(key)}, nil
 }
-func inspectionTicketArg(args []string) (string, []string) {
-	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
-		return args[0], args[1:]
-	}
-	return "", args
-}
 func inspectionJSON(out io.Writer, value any) error {
 	encoder := json.NewEncoder(out)
 	return encoder.Encode(value)
 }
 
 func inspect(args []string, stdout, stderr io.Writer) error {
-	input, args := inspectionTicketArg(args)
+	input, args := ticketArgument(args)
 	f := flags("inspect", stderr)
 	asJSON := f.Bool("json", false, "print a credential-free ticket summary")
 	if e := f.Parse(args); e != nil {
@@ -190,7 +184,7 @@ func readIdentity(client *ssh.Client, command string) (string, error) {
 	return value, nil
 }
 func check(ctx context.Context, args []string, stdout, stderr io.Writer) error {
-	input, args := inspectionTicketArg(args)
+	input, args := ticketArgument(args)
 	f := flags("check", stderr)
 	asJSON := f.Bool("json", false, "print SSH and identity check results")
 	timeout := f.Duration("timeout", 20*time.Second, "total SSH and identity check timeout")

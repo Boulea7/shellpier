@@ -22,6 +22,13 @@ func flags(name string, stderr io.Writer) *flag.FlagSet {
 	return f
 }
 
+func ticketArgument(args []string) (string, []string) {
+	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
+		return args[0], args[1:]
+	}
+	return "", args
+}
+
 func tokenKey(path string) (string, error) {
 	value := os.Getenv("SHELLPIER_RELAY_KEY")
 	if path != "" {

@@ -12,7 +12,6 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -93,10 +92,7 @@ func share(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 }
 
 func host(ctx context.Context, args []string, stdout, stderr io.Writer) error {
-	var input string
-	if len(args) > 0 && !strings.HasPrefix(args[0], "--") {
-		input, args = args[0], args[1:]
-	}
+	input, args := ticketArgument(args)
 	f := flags("host", stderr)
 	o := hostOptions{}
 	f.BoolVar(&o.awake, "keep-awake", false, "temporarily inhibit automatic system sleep")
