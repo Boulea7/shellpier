@@ -1,6 +1,8 @@
 # 路线调研与故障经验
 
-调研基准：2026-10-14。本页记录方案条件、实现选择和可复用的排障方法；版本升级后重新核验官方条件。替代产品没有随 ShellPier 打包，也没有被自动安装或部署。
+[返回文档目录](README.md) · [Legacy 指南](legacy-windows.md)
+
+资料核验日期：2026-10-14。本页记录方案条件、实现选择和可复用的排障方法；版本升级后重新核验官方条件。替代产品没有随 ShellPier 打包，也没有被自动安装或部署。
 
 ## 现成工具能解决什么
 
@@ -29,7 +31,7 @@
 
 ## 从失败模式得到的规则
 
-下表的测试覆盖的是可自动复现的契约；真实 OS、网络和厂商服务仍需现场验收。
+下表列出代码可复现的失败模式和对应测试；测试名称可在仓库 `internal/*/*_test.go` 或 `legacy/tests` 中查找。真实 OS、网络和厂商服务仍需单独验收。
 
 | 失败模式 | 应对 | 代码/自动化证据 |
 |---|---|---|
@@ -45,11 +47,13 @@
 | Windows 路径含空格/特殊字符，ProxyCommand 无法运行 | 按客户端语法引用；拒绝不安全路径；PowerShell ticket 参数加引号 | `access.TestWindowsPathSafety`、`TestProxyCommandPreservesPath`；[安装指南](install.md) |
 | 域账户与本地账户 COM 字段不同，写空 domain 也报错 | 先选择账户类型，域字段仅用于域账户；保存后重新读取 | `legacy/tests/bitvise-contract.ps1` |
 | 修改默认 Bitvise 实例影响既有用户 | GUID 独立实例；拒绝默认实例；来源地址精确允许后 deny-all | `legacy/tests/bitvise-contract.ps1`；[Legacy 实机边界](legacy-windows.md) |
-| 安装包、Plink 来源不明或旧 Windows 签名信任失败 | 固定 SHA-256，验证 Windows Authenticode 发布者；失败停止 | `legacy/tests/core-contract.ps1`；Mac 提取证书不是 Windows 信任验收 |
+| 安装包、Plink 来源不明或旧 Windows 签名信任失败 | 固定 SHA-256，验证 Windows Authenticode 发布者；失败停止 | `legacy/tests/core-contract.ps1`；嵌入证书存在不等于 Windows 信任验收 |
 
 还有几项不能靠 mock 消除的现场问题：校园多子网不能假设 `LocalSubnet` 可达；USB/虚拟网卡出现新地址后须重查路由；反向转发到本地服务时来源通常是 loopback；服务启动 GUI 不代表出现在交互桌面。旧 CMD/PowerShell 输出可能分别是本地代码页与 UTF-16，须按实际输出端解码；`-EncodedCommand` 使用 UTF-16LE Base64。
 
-新实例安装、调度到期、重启后的撤销、完整 Plink reverse 与各 OS 最低版本，需要保留单独验收记录。交叉编译、parser、mock、现代 CI 和真实运行验证是不同证据，不能互相代替。当前在线状态见 [Actions](https://github.com/Boulea7/shellpier/actions)，报告时引用具体 commit/job，而非静态声称全平台已通过。
+独立实例安装、调度到期、重启后的撤销和完整 Plink reverse 尚未完成对应旧系统的实机验收。交叉编译、parser、mock 与真实运行验证证明的是不同层，不能互相代替。
+
+通过 [GitHub Actions](https://github.com/Boulea7/shellpier/actions) 查询对应提交和 job 的实际结果。Go 检查、现代系统 runner、Legacy parser/mock、发行构建与原生产物运行验证覆盖不同层级；现代 Windows runner 和交叉编译不证明所有旧系统、架构或最低 OS 版本通过。平台条件与验收范围见 [兼容性与验收](compatibility.md)。
 
 ## 发布与复现
 
