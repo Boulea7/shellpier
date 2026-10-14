@@ -1,32 +1,68 @@
-# Troubleshooting and alternatives
+# 排查连接问题
 
-Start with `shellpier doctor --relay https://relay.example.com --json`. Record OS version, CPU architecture, CLI version, exit code and redacted diagnostics. Never attach access files, private keys, tickets, creation keys or full authorization headers to an issue.
+先判断失败发生在哪一层：程序能否运行 → 目标进程是否仍在 → 网络是否可达 → HTTPS/WSS 是否建立 → SSH 命令是否完成。不要只凭一个健康检查或网卡地址就判定整条链路正常。
 
-| Symptom | Check and action |
+## 最短排查路径
+
+```sh
+./shellpier version
+./shellpier doctor --json
+```
+
+用[单机演练](workflows.md#1-单机演练不需要外网或中继)验证 `share → connect`。本机成功后，直接模式从另一台机器连接；中继模式在两端分别检查：
+
+```sh
+./shellpier doctor --relay https://relay.example.com --json
+```
+
+然后运行真正的 `host` 和 `connect`。`relay.example.com` 是占位符，替换为运营者提供的地址。PowerShell 使用 `.\shellpier.exe`，票据参数写成 `'@access.json'`。
+
+## 常见现象
+
+| 现象 | 下一步 |
 |---|---|
-| HTTPS works, session fails | Check WebSocket upgrades, proxy timeouts and CLI-compatible authentication. A browser login may not authorize a CLI socket. |
-| Captive portal or login page | Complete normal login, then rerun doctor. Do not disable security or tunnel around the portal. |
-| 401/403 | Verify the correct creation key for session creation; host and client role tokens are not interchangeable. |
-| Host-key verification fails | Stop and verify the target independently. Recreate the session if intended; never disable strict checking. |
-| Target disappears | Check sleep, process exit, TTL and relay restart. `--keep-awake` can help when allowed; inspect its platform result. |
-| Command result lost | Inspect target-side effects before retrying; the old command is not automatically replayed. |
-| Cannot execute modern exe on Windows 7/8 | Use the separate legacy package and its requirements, not the modern Go binary. |
-| Direct connection refused | Check target listener, selected address, firewall and NAT. Do not expose an unrestricted system SSH server as a quick fix. |
-| SFTP cannot find config/key | Keep the generated directory intact; quote paths containing spaces or non-ASCII text. |
-| Antivirus blocks the executable | Verify release checksum and provenance, then use your organization's review process. Do not globally disable protection. |
+| PowerShell 不识别 `shellpier` | 进入解压目录使用 `.\shellpier.exe`；程序不会自动加入 PATH |
+| PowerShell 的 `@access.json` 报语法错误 | 加引号：`connect '@access.json' -- whoami` |
+| 输出文件或目录已存在 | 换新名字，或确认旧会话已停止后清理；程序不会覆盖凭据 |
+| 单机可连，另一台不能直连 | 检查选中地址、监听地址、目标防火墙与 AP 隔离；不同 NAT 使用 WSS |
+| Mac 选了 Wi-Fi 地址却走 VPN | 查 doctor 的实际网卡名，直接模式尝试 `connect --interface NAME @access.json -- whoami`；DNS 仍可能走系统解析/VPN |
+| 校园网返回认证页面 | 先按正常流程完成门户认证，再重试；浏览器成功不等于 CLI 长连接可用 |
+| HTTPS 健康检查成功，连接失败 | 检查 WebSocket Upgrade、反向代理空闲期限、目标 host 是否启动和 CLI 认证方式 |
+| 创建会话返回 401/403 | 核对创建密钥与 URL；host/client 角色票据不能代替创建密钥 |
+| host/connect 返回 401/403 | 核对票据角色与中继策略，重新获取有效票据；认证错误不应无限重试 |
+| 会话返回 404 | 可能已到期、被撤销或因中继重启丢失，重新邀请并启动目标端 |
+| TLS 证书不受信任 | 核对域名、证书链及组织根证书配置，保持证书验证开启 |
+| HTTP CONNECT 代理拒绝 | 核对获准的代理、目标端口和认证方式；PAC、NTLM/Kerberos 不能假设自动支持 |
+| 客户端等不到目标端 | 确认 host 前台进程与同一会话；客户端 ready 等待最多 15 秒 |
+| 目标端突然消失 | 检查 TTL、前台窗口、睡眠与中继重启；查看 `--keep-awake` 的实际平台结果 |
+| `status` 找不到状态文件 | 停止会删除状态文件；用新连接验证是否已经关闭 |
+| 主机公钥校验失败 | 先独立确认目标身份，再创建新会话；不要禁用主机公钥校验 |
+| SFTP 找不到 Windows 文件 | 先尝试相对路径；绝对路径用 `/C:/Users/you/file.txt`，空格按客户端规则加引号 |
+| 命令没有响应 | 先检查目标端是否已产生副作用，再决定重试；不会自动重放中断命令 |
+| Win7/8 无法运行现代 EXE | 使用[独立 Legacy 流程](legacy-windows.md)，其新流程尚需实机验收 |
 
-## Compatibility evidence
+`share --interface` 筛选公布地址，`--listen` 才决定实际监听；两者不要混淆。直接接口约束当前支持 macOS/Linux，Linux 可能因 `SO_BINDTODEVICE` 权限失败，错误会明确返回，Windows 暂不支持。
 
-Modern release targets are Windows amd64/386/arm64, Linux amd64/arm64 and macOS amd64/arm64. A successful cross-compilation only proves compilation. CI runners do not cover every OS version or CPU. Go's OS minimums can change: consult [Go minimum requirements](https://go.dev/wiki/MinimumRequirements). Legacy Windows uses a separate implementation and needs explicit Windows 7/8 acceptance tests.
+## 如何读 doctor
 
-## Alternatives when the transport does not fit
+网卡信息给出本机配置，不验证另一台机器能到达。门户认证、AP 隔离、DNS、IPv4、IPv6 是不同问题，可以分别失败。代理环境变量只显示已设置的变量名，不显示密码；变量为空不能证明系统代理或 VPN 未启用。
 
-| Tool | When useful | Costs and limits |
+系统代理、VPN 路由、浏览器认证与 CLI 的代理配置并不等价。中继使用标准 HTTP 代理机制，直接 TCP 不自动经过 HTTP 代理；`ALL_PROXY` 出现在诊断里也不代表它已被当前传输采用。组织 TLS 检查必须通过可信根证书配置验证，不关闭 TLS 校验。
+
+## 报告问题
+
+提交 Issue 时提供 OS/CPU、`version`、失败命令的参数结构、退出码和脱敏诊断，注明单机、直接还是中继模式，以及两端分别在哪一步失败。使用 `[票据文件]` 等占位符，不附 `access.json`、`host.ticket`、identity、创建密钥、私钥或完整 Authorization。
+
+编译成功、CI 通过和最低系统实机验证是不同证据。当前发行面向现代 Windows、Linux、macOS；详细要求见[兼容性说明](compatibility.md)。不要用现代 Windows 的成功结果替代 Win7/8 新 Legacy 流程验收。
+
+## 当前传输不适用时
+
+| 工具 | 合适场景 | 额外条件 |
 |---|---|---|
-| [OpenSSH](https://www.openssh.com/manual.html) | Existing allowed SSH server and reachable route | Service/firewall setup; reverse SSH on 443 is still SSH, not HTTPS |
-| [chisel](https://github.com/jpillora/chisel) | HTTP/WebSocket transport to an existing TCP service | Separate SSH server and chisel endpoint/authentication; inspect security flags |
-| [frp](https://github.com/fatedier/frp) | Managed long-lived reverse proxy estate | More operator configuration; transport/TLS requirements depend on mode |
-| [Bitvise SSH Server](https://bitvise.com/ssh-server) | Legacy Windows with a compatible vendor version | Confirm version/OS support, licensing and separate instance; administrator setup may be required |
-| [PuTTY](https://www.chiark.greenend.org.uk/~sgtatham/putty/latest.html) | Existing SSH access from Windows | Client/Plink only; does not itself make the target reachable or HTTPS-compatible |
+| [OpenSSH](https://www.openssh.com/manual.html) | 已有允许的 SSH 服务和可达路由 | 需要服务端/防火墙配置；443 上的原始 SSH 不等于 HTTPS |
+| [chisel](https://github.com/jpillora/chisel) | 通过 HTTP/WebSocket 访问已有 TCP 服务 | 另需 SSH 服务、中继和认证配置 |
+| [frp](https://github.com/fatedier/frp) | 统一管理长期反向代理 | 运营配置更多，按实际模式检查 TLS 和认证 |
+| [Bitvise SSH Server](https://bitvise.com/ssh-server) | Legacy Windows 的独立服务端 | 核对版本、OS 支持和许可，通常需要管理员安装 |
+| [PuTTY](https://www.chiark.greenend.org.uk/~sgtatham/putty/latest.html) | Windows 的现有 SSH 客户端连接 | PuTTY/Plink 本身不让目标变得可达，也不把原始 SSH 变成 HTTPS |
 
-These are independent products, not bundled fallbacks. Obtain binaries from their official distribution and check the exact version's system requirements. An HTTP CONNECT proxy, TLS interception or corporate VPN may need approved explicit configuration; HTTPS port numbers alone do not guarantee policy compliance.
+这些是独立产品，不是 ZIP 内的自动后备方案。需要时从官方来源取得合适版本，再按实际网络和账户权限验证。
