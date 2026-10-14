@@ -15,84 +15,30 @@
   <a href="LICENSE"><img src="https://img.shields.io/github/license/Boulea7/shellpier" alt="MIT 许可证"></a>
 </p>
 
-<p align="center">
-  <a href="https://github.com/Boulea7/shellpier/releases">下载</a> ·
-  <a href="docs/README.md">文档</a> ·
-  <a href="docs/commands.md">命令</a> ·
-  <a href="CONTRIBUTING.md">参与贡献</a> ·
-  <a href="SUPPORT.md">获取帮助</a>
-</p>
+ShellPier 让自己的 AI Agent 临时执行另一台电脑上的命令、传输文件；解压后即可运行，使用当前用户权限。
 
-ShellPier 把当前用户的命令执行和文件传输交给临时 SSH 会话。现代版解压即用，无需安装系统 SSH 服务；可在局域网直连，也可通过自建 WSS 中继连接校园网、手机热点后的电脑。
+## 下载与使用
 
-- **连接有期限**：默认一小时，自定义 TTL，支持主动撤销和持续运行。
-- **控制端少配置**：自动识别目标用户与地址，生成固定主机公钥的 SSH 配置。
-- **常用动作独立**：查看票据、检查身份、上传下载、生成密钥，均可单独调用。
-- **适合 Agent**：提供 JSON 输出、内置 SSH 客户端和 [Agent skill](skills/shellpier/SKILL.md)。
+从 [Releases](https://github.com/Boulea7/shellpier/releases) 下载对应系统/架构的 ZIP 并解压。支持 Windows 10/11、Linux、macOS 13+；Windows 7/8 请参阅[旧版 Windows 指南](docs/legacy-windows.md)。当前为预览版，安装和双击启动见[安装指南](docs/install.md)。
 
-## 下载
-
-| 系统 | 选择 |
-|---|---|
-| Windows 10 / 11 | `windows_amd64`、`windows_386` 或 `windows_arm64` |
-| Linux | `linux_amd64` 或 `linux_arm64` |
-| macOS 13+ | `darwin_amd64` 或 `darwin_arm64` |
-| Windows 7 / 8 | 包内 [Legacy 独立入口](docs/legacy-windows.md)；新流程仍需旧系统实机验收 |
-
-从 [Releases](https://github.com/Boulea7/shellpier/releases) 下载 ZIP，校验 `checksums.txt` 后解压。详见[安装与离线传递](docs/install.md)。当前为预览版。
-
-## 先跑通一次
-
-在同一台 Windows 电脑开两个 **PowerShell** 窗口；这次演练只监听本机，无需中继。
+在可互通的局域网中，两端分别运行：
 
 ```powershell
-# 窗口 A：保持运行，Ctrl+C 结束
-.\shellpier.exe share --relay= --listen 127.0.0.1:0 --ttl 30m --output access.json
-```
+# 目标电脑：默认共享 3 小时，Ctrl+C 提前结束
+.\shellpier.exe share --output access.json
 
-```powershell
-# 窗口 B：核验主机和账户，再执行命令
-.\shellpier.exe check '@access.json'
+# 控制电脑：私下接收 access.json 后
 .\shellpier.exe connect '@access.json' -- whoami
 ```
 
-macOS / Linux 将 `.\shellpier.exe` 换成 `./shellpier`。`access.json` 是私密凭据；会话结束后删除本次生成的文件。
+macOS/Linux 把 `.\shellpier.exe` 换成 `./shellpier`。`access.json` 是私密凭据，请仅交给需要连接的人或 Agent。
 
-## 连到另一台电脑
-
-双方可直连时，按[局域网示例](docs/workflows.md)操作。跨校园网、NAT 或手机热点时，先取得自己或团队的中继 URL 与创建密钥，再从控制端邀请目标机：
-
-```powershell
-# 控制端：私钥留在本机，只把 host.ticket 私下交给目标机
-.\shellpier.exe invite --relay https://relay.example.com --token-file .\relay.key --ttl 1h --out .\invitation
-
-# 目标机
-.\shellpier.exe host '@host.ticket'
-
-# 控制端
-.\shellpier.exe check '@invitation/access.json'
-```
-
-中继需要[自行部署](docs/relay.md)，没有预置公共服务。目标机不需要手输 Windows 用户名或 IP。
-
-## 几个常用动作
-
-```powershell
-.\shellpier.exe inspect '@access.json' --json
-.\shellpier.exe upload '@access.json' .\report.txt report.txt
-.\shellpier.exe download '@access.json' result.txt .\result.txt
-.\shellpier.exe ssh-config '@access.json' --out .\session-ssh
-.\shellpier.exe keygen --out .\agent-key
-```
-
-上传、下载默认不覆盖文件。还支持 `--keep-awake`、持续会话、四种终端补全和远程撤销，见[命令手册](docs/commands.md)。
+跨校园网、热点等 NAT 网络时，需要配置自己的或团队的[中继](docs/relay.md)。更多用法见[使用场景](docs/workflows.md)。
 
 ## 文档与贡献
 
-[使用场景](docs/workflows.md) · [排障](docs/troubleshooting.md) · [常见问题](docs/faq.md) · [兼容性](docs/compatibility.md) · [方案调研](docs/research.md)
+[文档首页](docs/README.md) · [命令](docs/commands.md) · [排障](docs/troubleshooting.md) · [开发指南](docs/development.md) · [参与贡献](CONTRIBUTING.md) · [获取帮助](SUPPORT.md)
 
-欢迎修复问题、补充平台验收和改进文档。从 [CONTRIBUTING](CONTRIBUTING.md) 开始；[开发指南](docs/development.md)说明目录职责、如何增加命令与相应测试。[路线图](docs/roadmap.md)列出当前能力和待完善项。
-
-现代版以当前用户权限运行，支持命令执行和 SFTP；暂不提供交互终端或桌面控制。清理仅处理本工具资源，不删除系统审计，也不回滚已执行命令。详见[安全策略](SECURITY.md)。
+支持命令执行和 SFTP，暂不提供交互终端或桌面控制。[安全说明](SECURITY.md)
 
 MIT © [Boulea7](https://github.com/Boulea7)
