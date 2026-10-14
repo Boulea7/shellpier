@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
+	"encoding/base64"
 	"encoding/json"
 	"encoding/pem"
 	"fmt"
@@ -216,10 +217,23 @@ func TestPTYInteractiveResizeAndSignal(t *testing.T) {
 	if request(t, s, "window-change", struct{ Columns, Rows, Width, Height uint32 }{1001, 0, 0, 0}) {
 		t.Fatal("oversized resize accepted")
 	}
-	command := "printf '__interactive_ok__\\n'; stty size\n"
-	if runtime.GOOS == "windows" {
-		command = "[Console]::WriteLine('__interactive_ok__')\r\n"
+	const readyMarker = "__shell_ready_after_resize__"
+	var encoded strings.Builder
+	for _, char := range []byte(readyMarker + "\n") {
+		fmt.Fprintf(&encoded, "\\%03o", char)
 	}
+	// stty may print before it exits or returns the foreground to the shell.
+	// A following shell builtin proves that transition completed; encoding
+	// prevents the terminal's input echo from satisfying the output barrier.
+	command := "printf '__interactive_ok__\\n'; stty size; printf '" + encoded.String() + "'\n"
+	if runtime.GOOS == "windows" {
+		token := base64.StdEncoding.EncodeToString([]byte(readyMarker))
+		command = "[Console]::WriteLine('__interactive_ok__'); [Console]::WriteLine([System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('" + token + "')))\r\n"
+	}
+	if strings.Contains(command, readyMarker) {
+		t.Fatal("shell readiness marker was present in the echoed input")
+	}
+
 	if _, err = io.WriteString(stdin, command); err != nil {
 		t.Fatal(err)
 	}
@@ -227,6 +241,7 @@ func TestPTYInteractiveResizeAndSignal(t *testing.T) {
 	if runtime.GOOS != "windows" {
 		waitTerminalOutput(t, output, "30 100")
 	}
+	waitTerminalOutput(t, output, readyMarker)
 	if !request(t, s, "signal", struct{ Name string }{"KILL"}) {
 		t.Fatal("terminal KILL rejected")
 	}
