@@ -148,7 +148,7 @@ func TestTerminalUnixBackgroundJobsCancelled(t *testing.T) {
 	}
 	defer term.Close()
 	output := captureTerminal(t, term)
-	command := `set -m; sleep 30 & printf '__BACKGROUND_PID:%s__\n' "$(jobs -p)"; printf '__BACKGROUND_READY__\n'` + "\n"
+	command := `set -m; sleep 30 & printf '__BACKGROUND_PID:%s__\n' $! ; printf '__BACKGROUND_READY__\n'` + "\n"
 	_, err = term.Write([]byte(command))
 	if err != nil {
 		t.Fatal(err)

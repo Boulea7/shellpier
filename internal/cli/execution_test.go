@@ -74,10 +74,17 @@ func TestExecEnvironmentWorkdirScriptAndStdin(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, expected := range []string{"space $value", working, "input 中文"} {
-		if !strings.Contains(stdout.String(), expected) {
-			t.Fatalf("output missing %q: %q", expected, stdout.String())
-		}
+	parts := strings.SplitN(strings.ReplaceAll(stdout.String(), "\r\n", "\n"), "\n", 3)
+	if len(parts) != 3 || parts[0] != "space $value" || parts[2] != "input 中文" {
+		t.Fatalf("environment or stdin changed: %q", stdout.String())
+	}
+	expected, err := os.Stat(working)
+	if err != nil {
+		t.Fatal(err)
+	}
+	actual, err := os.Stat(parts[1])
+	if err != nil || !os.SameFile(expected, actual) {
+		t.Fatalf("remote working directory differs: %q, %v", parts[1], err)
 	}
 }
 
