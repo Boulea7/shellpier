@@ -21,6 +21,7 @@ Your AI Agent's computer:
   shellpier ssh-config <access-ticket or @file> --out NEW-DIRECTORY
   shellpier upload <access-ticket or @file> LOCAL REMOTE
   shellpier download <access-ticket or @file> REMOTE LOCAL
+  shellpier keygen --out NEW-DIRECTORY [--json]
   shellpier revoke <host-ticket or @file>
 
 Lifecycle and diagnostics:
@@ -77,6 +78,8 @@ func Run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 		return check(ctx, args[1:], stdout, stderr)
 	case "upload", "download":
 		return transfer(ctx, args[0], args[1:], stdout, stderr)
+	case "keygen":
+		return keygen(args[1:], stdout, stderr)
 	case "status", "stop":
 		return control(ctx, args[0], args[1:], stdout, stderr)
 	case "revoke":
