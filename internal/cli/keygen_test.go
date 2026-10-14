@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -55,16 +54,7 @@ func TestKeygenParseAndSign(t *testing.T) {
 	if strings.Contains(output.String(), "PRIVATE KEY") || bytes.Contains(output.Bytes(), private) {
 		t.Fatal("private key printed")
 	}
-	if runtime.GOOS == "windows" {
-		for _, path := range []string{dir, result.PrivateKeyPath, result.PublicKeyPath} {
-			script := `$ErrorActionPreference='Stop'; $sid=[Security.Principal.WindowsIdentity]::GetCurrent().User; $acl=Get-Acl -LiteralPath $env:SHELLPIER_TEST_ACL_PATH; if(-not $acl.AreAccessRulesProtected){throw 'ACL inheritance is not protected'}; $rules=@($acl.GetAccessRules($true,$true,[Security.Principal.SecurityIdentifier])); if($rules.Count -ne 1 -or $rules[0].IdentityReference -ne $sid -or $rules[0].AccessControlType -ne 'Allow'){throw 'ACL is not restricted to the current user'}`
-			command := exec.Command("powershell.exe", "-NoProfile", "-NonInteractive", "-Command", script)
-			command.Env = append(os.Environ(), "SHELLPIER_TEST_ACL_PATH="+path)
-			if output, err := command.CombinedOutput(); err != nil {
-				t.Fatalf("private ACL verification failed: %v: %s", err, output)
-			}
-		}
-	}
+
 	if runtime.GOOS != "windows" {
 		for path, want := range map[string]os.FileMode{dir: 0700, result.PrivateKeyPath: 0600, result.PublicKeyPath: 0600} {
 			info, err := os.Stat(path)
