@@ -125,11 +125,15 @@ func hostFeatureJobProcess(t *testing.T, client *ssh.Client, dir string) *os.Pro
 		t.Fatal(err)
 	}
 	quote := "'" + strings.ReplaceAll(exe, "'", "'\\''") + "'"
-	if runtime.GOOS == "windows" {
-		quote = "\"" + exe + "\""
-	}
 	pidFile := filepath.Join(dir, "owned.pid")
 	request := jobstate.Request{Action: "start", OperationID: "host-lifecycle", Command: quote + " -test.run=^TestHostFeatureJobChild$", Env: []string{"SHELLPIER_HOST_JOB_HELPER=1", "SHELLPIER_HOST_JOB_PID=" + pidFile}}
+	if runtime.GOOS == "windows" {
+		// Expand quoted paths inside cmd, after Go has encoded the /c argument.
+		// Go's normal Windows argument quoting escapes literal quotes with backslashes,
+		// which cmd does not decode using the CommandLineToArgvW rules.
+		request.Command = "%SHELLPIER_HOST_JOB_EXE% -test.run=TestHostFeatureJobChild"
+		request.Env = append(request.Env, "SHELLPIER_HOST_JOB_EXE=\""+exe+"\"")
+	}
 	payload, err := json.Marshal(request)
 	if err != nil {
 		t.Fatal(err)
