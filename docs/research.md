@@ -2,7 +2,7 @@
 
 [返回文档目录](README.md) · [路线图](roadmap.md) · [Legacy 指南](legacy-windows.md)
 
-调研日期：2026-10-16。本文记录 ShellPier v0.6 开发线的能力与选型取舍；构建、平台验收与发行状态分别以对应提交的 CI 和 Release 为准。外部工具的能力以所链接的一手文档为依据，不随 ShellPier 打包或自动安装。
+调研日期：2026-10-16。本文记录 ShellPier v0.7 开发线的能力与选型取舍；构建、平台验收与发行状态分别以对应提交的 CI 和 Release 为准。外部工具的能力以所链接的一手文档为依据，不随 ShellPier 打包或自动安装。
 
 ShellPier 面向当前用户临时开放的 CLI 与 AI 远程操作：建立可到期、固定主机公钥的访问，再执行命令或传文件。已经有系统 SSH、组织网络或文件同步设施时，复用它们往往更简单。
 
@@ -49,7 +49,21 @@ ShellPier 面向当前用户临时开放的 CLI 与 AI 远程操作：建立可�
 
 OpenSSH 仍有更完整的系统账户认证、证书/FIDO、逐密钥策略、远端 Unix socket/TUN/X11/认证 agent 转发、客户端配置与交互控制。ShellPier 继续复用原生客户端能力；不把这些缺口统称为已兼容。SFTP 也有独立命令和扩展：例如 OpenSSH `sftp -b -` 的 stdin 是批处理命令，并不是上传 payload；服务端拷贝、权限/所有者操作、fsync 等需逐项确认协议扩展，不能从“能连 sftp”推导全部支持。[sftp][sftp]
 
-研究后的工程判断是先补可直接复用 SSH 数据流的三项功能，普通 share 即可使用，不增加前置检查或许可流程；普通传输继续直接复制，不引入额外 SHA 校验或逐密钥策略配置。多端口同连接、文件清单输入、host 托管可重连 PTY 有价值，但分别引入多资源生命周期、批量路径语义和远端输出/身份恢复，本轮没有仓促实现。Chisel 展示多端口复用；rsync 的 `--files-from` 有自己的路径与递归规则；tmux 的 detach/attach 则由远端服务保存会话，现有控制端 terminal worker 不具备该保证。[Chisel][chisel]、[rsync][rsync]、[tmux][tmux]
+v0.6 先补了可直接复用 SSH 数据流的三项功能。v0.7 继续吸收多监听、清单输入和终端输出组合；普通 share 即可使用，不增加前置检查或许可流程，普通传输仍直接复制，不增加额外 SHA 或逐密钥策略配置。
+
+### v0.7 的选择：组合已有链路，保留明确边界
+
+| 比较 | 高置信事实 | 本轮工程取舍与剩余缺口 |
+|---|---|---|
+| OpenSSH / Chisel 多转发 | OpenSSH 可在一个连接中配置多个转发，Chisel 也提供多端口复用。[ssh][ssh]、[Chisel][chisel] | 重复 `forward --local` 补齐一个 SSH 下的多本地固定监听；先全部绑定再 ready，单目的失败隔离到 stream。没有增加运行时动态修改监听、远端动态 SOCKS 或通用路由；共享容量仍有界。 |
+| rsync / rclone 文件清单 | rsync `--files-from` / `--from0` 支持文件选择，但影响相对路径与递归语义；rclone 的过滤清单有自己的空白、注释和 raw 规则。[rsync][rsync]、[rclone filtering][rclone-filtering] | 只吸收“明确选文件”：有界 LF/CRLF 或 NUL 清单、普通文件、保留相对层级。ShellPier 不裁剪空格、不认注释，拒绝路径越界与大小写冲突；不声称与任一工具的清单完全兼容，不加入差量或镜像删除。 |
+| tmux / Mosh / tmate 的会话 | tmux detach/attach 由远端服务保存会话；Mosh 同步屏幕状态；tmate 支持共享会话及参与者入口。[tmux][tmux]、[Mosh][mosh]、[tmate][tmate-readme] | `terminal tail` 只把现有 worker 的有界字节输出交给管道工具，可跟随并报告丢失。它不是 host 托管 PTY、Mosh 漫游或多人共享。 |
+
+OpenSSH 9.2 已引入 `ChannelTimeout` 和 `UnusedConnectionTimeout`，分别处理闲置 channel 与无 channel 连接；它们不同于保活、TTL 和命令总期限。ShellPier 本轮不增加这套超时策略矩阵。[OpenSSH 9.2 发布说明][openssh-92]
+
+SFTP 的扩展名称与后端实现也必须分开。OpenSSH 协议文档定义 `copy-data`，不代表任意 SFTP 服务都支持；当前 pkg/sftp v1.13.11 请求服务器未实现该扩展，ShellPier 不宣称服务端拷贝。rclone 的 SFTP server-side copy 则有 hardlink 路线，硬链接共享底层文件也不同于独立复制，不能照搬为“零成本复制”承诺。[OpenSSH PROTOCOL][openssh-protocol]、[pkg/sftp 源码][pkg-sftp-server]、[rclone SFTP][rclone-sftp]
+
+host 托管可重连 PTY 暂缓：它需要独立会话 manager、远端输出/输入状态、去重、TTL 与恢复身份，还要管理 ConPTY 的管道排空和关闭生命周期。Windows 官方文档说明创建、I/O 与关闭均需配套处理；仅重启 SSH 客户端或启用 ControlPersist 不保存远端 PTY。[Microsoft ConPTY][conpty]、[autossh][autossh]。tmate 官方仓库还说明公共服务已于 2025 年 7 月关闭，现需自托管，不能把历史公开入口作为现成依赖。[tmate README][tmate-readme]
 
 ### 目录限定与反向监听为什么这样做
 
@@ -105,7 +119,7 @@ ShellPier 已有直连与 WSS 中继、邀请和撤销、TTL、SSH exec/PTY/SFTP
 
 ## 其他连接路线
 
-[Chisel][chisel] 支持单连接多个端口、HTTP/WebSocket 传输和反向转发，值得吸收的是明确端口即可建立连接的入口；ShellPier 复用已有 SSH 协议，本轮在既有 SSH 上增加 SOCKS5 CONNECT 入口，不再增加另一套 UDP 与访问规则。需要长期维护多服务暴露时，可选择 [frp](https://gofrp.org/en/docs/)；它的服务端/客户端配置与公网端口管理不应成为临时连接的前置条件。
+[Chisel][chisel] 支持单连接多个端口、HTTP/WebSocket 传输和反向转发，值得吸收的是明确端口即可建立连接的入口；ShellPier 复用已有 SSH 协议，已有 SOCKS5 CONNECT，本轮增加同连接多本地固定监听。需要长期维护多服务暴露时，可选择 [frp](https://gofrp.org/en/docs/)；它的服务端/客户端配置与公网端口管理不应成为临时连接的前置条件。
 
 [sshuttle 的系统要求][sshuttle]包括本地防火墙操作所需权限和远端 Python。它适合将网段流量透明地送入 SSH，代价是本机网络配置与运行环境要求；ShellPier 只吸收按需连通的思路，不引入透明路由、DNS 接管或远端 Python 依赖。
 
@@ -178,3 +192,10 @@ ShellPier 已有直连与 WSS 中继、邀请和撤销、TTL、SSH exec/PTY/SFTP
 [rclone-cat]: https://rclone.org/commands/rclone_cat/
 [tmux]: https://github.com/tmux/tmux/wiki/Getting-Started#attaching-and-detaching
 [wormhole]: https://magic-wormhole.readthedocs.io/en/latest/welcome.html
+
+[openssh-92]: https://www.openssh.org/txt/release-9.2
+[openssh-protocol]: https://github.com/openssh/openssh-portable/blob/master/PROTOCOL
+[rclone-filtering]: https://rclone.org/filtering/
+[pkg-sftp-server]: https://github.com/pkg/sftp/blob/v1.13.11/request-server.go
+[tmate-readme]: https://github.com/tmate-io/tmate
+[conpty]: https://learn.microsoft.com/en-us/windows/console/creating-a-pseudoconsole-session

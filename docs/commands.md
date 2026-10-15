@@ -165,6 +165,17 @@ shellpier terminal close --state ./terminal-session/state.json --json
 
 `write` 使用 `--text` 或 `--file`，二选一；`--file -` 读取 stdin，单次最多 1 MiB。输入按原始字节发送，执行一行命令时需在文件或文本中包含换行。`status` 查看终端元数据，`close` 只关闭该终端，不撤销分享会话；断线不会自动重放输入或命令。
 
+### 直接输出终端内容：tail
+
+```sh
+shellpier terminal tail --state ./terminal-session/state.json --cursor 0
+shellpier terminal tail --state ./terminal-session/state.json --cursor 0 --follow --timeout 30m
+```
+
+`tail` 把原始终端字节写到 stdout，不包装 JSON；缓冲丢失信息写 stderr。默认单次最多读取 1 MiB；`--follow` 分块读取，终端关闭后排空剩余缓冲再结束。期限默认 30 分钟，必须大于 0 且不超过 24 小时。输出可能包含回显、控制序列和敏感信息。
+
+停止读取、取消或读取超时不关闭远端 terminal。tail 的返回值描述读取是否成功，不能当作远端命令退出码；需要判断终端结束原因，用 `terminal wait` / `status`。它不恢复丢失的历史输出，也不在 SSH 断线后恢复原 PTY；MCP 不开放 tail。
+
 ## 远端文件操作
 
 ```sh
@@ -241,6 +252,21 @@ shellpier download @access.json hello.txt - > received.txt
 
 流传输支持期限、`--bwlimit` 与写往 stderr 的 `--progress jsonl`，不能与 `--recursive`、`--resume`、`--resume-state`、`--preserve-times`、`--dry-run` 或 `--skip-existing` 合用。上传可用 `--json` 输出最终摘要；下载到 `-` 不接受 `--json`，也不输出传输摘要，stdout 只有原始文件字节。SSH 保护传输，普通流复制不额外计算 SHA。PowerShell 的文本管道在不同版本可能改变编码；二进制流请使用保持原始字节的调用方式，例如 CMD 的文件重定向，或直接下载到文件。
 
+## 按文件清单传输
+
+```sh
+shellpier upload @access.json ./build remote-build --files-from ./selected.txt --json
+shellpier download @access.json remote-build ./received --files-from ./selected.txt --skip-existing --json
+# macOS/Linux：stdin 是路径清单，SOURCE_ROOT 和 DEST_ROOT 仍是目录
+printf 'app/main.js\nassets/logo.png\n' | shellpier upload @access.json ./build remote-build --files-from -
+```
+
+`--files-from FILE` 从控制端本地文件读取相对于 SOURCE_ROOT 的普通文件路径，保留相对层级并自动创建目标父目录；目标已有真实目录可复用。清单中的目录、符号链接、特殊文件或缺失文件报错。默认文件不覆盖，仍可用 `--dry-run`、`--skip-existing`、`--preserve-times`、`--bwlimit`、进度和 JSON。
+
+默认按 LF/CRLF 分行，不去掉文件名前后空格，也不把 `#` 当注释；含换行的文件名用 `--from0` 读取 NUL 分隔清单。允许路径开头的 `./`，拒绝内部 `.`/`..`、绝对路径、盘符、UNC、反斜线及大小写冲突。清单最大 8 MiB，每条路径最大 4096 字节，并受 `--max-files`、`--max-depth` 限制；空清单不创建文件或目录。
+
+清单模式不与 `--recursive`、`--exclude`、`--resume`、`--resume-state` 或文件内容管道 `-` 合用；`--from0` 必须配合 `--files-from`。执行前逐条检查，写入时再检查，但不构成文件系统快照或整批事务；后续失败不回滚已完成的文件。MCP 可使用本地清单路径，但拒绝 `--files-from -`，协议 stdin 不能同时作为清单。
+
 ## 目标端长任务：jobs
 
 完整模式默认支持 jobs，普通 `share --output access.json` 或 `host @host.ticket` 即可；需要关闭时设置 `--allow-jobs=false`。
@@ -275,6 +301,16 @@ shellpier forward @access.json --reverse --listen 8080 --to 127.0.0.1:3000 --jso
 `--dynamic` 支持 SOCKS5 的无认证 CONNECT，接受 IPv4、IPv6 与域名；域名交给目标端解析。客户端应选择远端解析的 SOCKS5 模式，例如 `curl --socks5-hostname 127.0.0.1:1080 https://example.com/`。不支持 SOCKS4、BIND 或 UDP；不能与 `--to`、`--reverse` 合用。它仍受目标端 full 模式、可选目的地址限制与并发容量约束。代理仅监听 loopback，但本机其他进程也可能连接，因此不要把它当成隔离的专用网络。
 
 `proxy @access.json --to 127.0.0.1:8080` 提供单条 stdin/stdout TCP 字节桥，无需开本地监听端口；目的地址从目标端访问，与正向转发使用相同限制。它可用于自定义 `ProxyCommand`，但不自动登录下一跳，也不生成多跳票据。stdin 或远端先结束一个方向时，另一个方向可继续传输；两边结束后还会在有限时间内确认 SSH 连接仍有响应，失联或确认超时按失败返回，不重放字节。这仅确认传输状态，不证明目标服务已经提交业务操作。`--timeout 0` 使用票据期限，建连重试与保活参数只在带 `--to` 时可设置。
+
+### 一个 SSH 连接转发多个本地端口
+
+```sh
+shellpier forward @access.json --local 8080=127.0.0.1:8080 --local 5432=db.example.com:5432 --json
+```
+
+可重复 `--local LISTEN=HOST:PORT`，最多 16 条，仅用于本地固定 TCP 转发；所有监听使用同一 SSH 连接与共享并发预算，不增加目标端容量。不能同时显式传入旧的 `--listen`、`--to`、`--reverse` 或 `--dynamic`。LISTEN 仍限定 loopback，端口 0 自动分配。
+
+所有监听绑定成功才报告 ready；任一绑定失败会关闭已绑定端口。JSON 输出是一条 `schema_version:1`、`command:forward`、`event:listening`、`direction:local` 事件，`forwards` 数组给出实际 `listen` 与规范化 `target`。ready 只证明本地端口绑定，不证明所有目的服务可达。某条目的连接失败只影响该 stream，其他连接与监听继续；固定和反向转发也保留这一行为。取消、TTL 或 SSH 失联会停止整组，不重放数据。
 
 原生 OpenSSH 可使用 `-L`、`-D` 和标准 `-R`，例如 `ssh -F ./ssh-session/ssh_config -N -R 8080:127.0.0.1:3000 shellpier`。本地 Unix socket 入口也可使用 `-L /tmp/new-private-dir/service.sock:127.0.0.1:8080`；远端 Unix socket 监听未实现。
 

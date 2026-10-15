@@ -15,9 +15,9 @@
 | 已实现 | SSH 建连超时与应用层保活、原生 OpenSSH 可选私有连接复用 |
 | 已实现 | --root 目录分享、SFTP 专用和只读模式，能力发现与受限模式诊断 |
 | 已实现 | host 托管后台任务、operation ID 去重、有界日志与等待/取消 |
-| 已实现 | 持久终端等待、输入 ID 查询与可选私有日志 |
-| 已实现 | loopback 正向/反向 TCP 转发、内置 SOCKS5 CONNECT 与 stdin/stdout 字节桥 |
-| 已实现 | upload stdin / download stdout 管道传输，默认拒绝覆盖 |
+| 已实现 | 持久终端等待、输入 ID 查询、原始输出 tail 与可选私有日志 |
+| 已实现 | loopback 正向/反向 TCP 转发、单 SSH 多本地监听、内置 SOCKS5 CONNECT 与 stdin/stdout 字节桥 |
+| 已实现 | upload stdin / download stdout 管道传输，按清单选择普通文件，默认拒绝覆盖 |
 | 已实现 | MCP stdio 接入，复用命令 schema、显式目标与有界执行 |
 | 已实现 | 用户级服务计划、安装、启动、停止和卸载，显式登录自启 |
 | 已实现 | 现代三平台 CI、离线发行包、中文和英文 README、Agent skill |
@@ -25,6 +25,7 @@
 | 待测试 | 最低系统版本、更多 CPU、真实校园代理与热点组合 |
 | 待完善 | 发行包签名、公证与更完整的平台测试 |
 | 待测试 | 用户级服务在不同桌面登录环境下的实际启停与登录自启 |
+| 暂缓 | host 托管、可跨 SSH 断线恢复的 PTY；需要远端会话身份、输入去重、输出恢复和 ConPTY 生命周期设计 |
 
 后台任务及其 operation ID 只保留在同一 host 进程内；终端输入 operation ID 保留在控制端同一 worker 生命周期内。单文件续传依赖原票据的主机身份、原文件及私有 journal。用户级服务不延长票据期限，也不自动重启崩溃进程或恢复任务。各功能的使用方式与边界见[命令手册](commands.md)。
 

@@ -209,3 +209,13 @@ curl --socks5-hostname 127.0.0.1:1080 https://example.com/
 ## 生成文件后直接上传
 
 macOS/Linux 可用 `printf 'hello\n' | ./shellpier upload @access.json - hello.txt`，把 stdout 直接保存为远端新文件。下载用 `./shellpier download @access.json hello.txt - > received.txt`，stdout 保持原始文件内容；需要保留时间、预演或续传时使用普通文件路径。失败后的部分数据边界见[流传输说明](commands.md#用管道传输文件)。
+
+## 同时访问多个固定服务
+
+`./shellpier forward @access.json --local 8080=127.0.0.1:8080 --local 5432=db.example.com:5432` 在同一个 SSH 连接中建立多个 loopback 监听。所有端口绑定成功后开始服务；单个目的服务临时失败不会带掉其他连接。结束进程关闭整组。需要通用 SOCKS5 时使用既有 `--dynamic`，两种形式分别运行。
+
+## 只交接选定文件
+
+在本地 `selected.txt` 中逐行列出 `app/main.js`、`assets/logo.png` 等相对文件路径，再执行 `./shellpier upload @access.json ./build remote-build --files-from ./selected.txt`。程序保留层级、创建父目录，不默认覆盖文件；需要查看计划可加 `--dry-run`。文件名含换行时用 NUL 清单和 `--from0`。这不是目录同步或整批事务，详细清单规则见[命令手册](commands.md#按文件清单传输)。
+
+终端输出需要直接接入现有工具时，可用 `terminal tail --state FILE --follow`；退出读取不会关闭 terminal，完成状态仍通过 `wait` / `status` 获取。

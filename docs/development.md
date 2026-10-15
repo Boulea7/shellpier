@@ -75,3 +75,5 @@ python3 scripts/validate_docs.py --root /path/to/unpacked-release
 发行包不包含凭据、缓存或内部协作文档。依赖、许可或支持平台变化在 PR 中说明。
 
 Windows 构建使用隔离的 Go 1.27.2 副本回补官方运行时线程状态判断，不修改本机已安装 Go。原因、对照测试、复现方法与移除条件见 [Windows 运行时调查](windows-runtime.md)；不要把修复已知缺陷写成已确认原事故根因。
+
+多监听 forward 必须先全部绑定再报告 ready，任一绑定失败关闭已绑定监听；目的服务拒绝或单 stream 失败不取消整个转发，SSH 失联/TTL 才结束全组。文件清单的格式、容量、相对路径、大小写和源目标检查保持跨平台一致，预检后执行复检不宣称整批事务。terminal tail 的原始 stdout 与 MCP 协议流分离，取消读取不取消终端。host 托管可重连 PTY 需要独立 manager、状态恢复、输入去重、TTL 与 Windows ConPTY 生命周期设计，不能通过 ControlPersist 或重启客户端替代。
