@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"net"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -151,7 +152,7 @@ func TestProxyLegacyHelpAndTicketValidation(t *testing.T) {
 		t.Fatalf("offline help: %v, %q", err, out.String())
 	}
 	err := Run(context.Background(), []string{"proxy", "@missing-ticket"}, nil, io.Discard, io.Discard, "test")
-	if err == nil || !strings.Contains(err.Error(), "missing-ticket") {
+	if !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("legacy ticket read: %v", err)
 	}
 }

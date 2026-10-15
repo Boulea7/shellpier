@@ -11,6 +11,7 @@ import shutil
 import subprocess
 import sys
 import time
+import uuid
 
 from patch_go_windows import patch
 
@@ -37,15 +38,15 @@ def main():
     env.pop("GODEBUG", None)
     env.pop("GOROOT", None)
     metadata = {"platform": platform.platform(), "python": sys.version, "rounds": args.rounds, "count": args.count, "full_rounds": args.full_rounds, "blob_mib": args.blob_mib}
-    def command(name, cmd, run_env=env, timeout=240):
+    def command(name, cmd, run_env=env, timeout=240, cwd=None):
         started = time.monotonic()
         try:
-            result = subprocess.run(cmd, cwd=root, env=run_env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=timeout)
+            result = subprocess.run(cmd, cwd=cwd or root, env=run_env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=timeout)
             output, code = result.stdout, result.returncode
         except subprocess.TimeoutExpired as exc:
             output, code = (exc.stdout or b"") + b"\nDIAGNOSTIC PROCESS TIMEOUT\n", 124
         (out / (name + ".log")).write_bytes(output)
-        record = {"name": name, "command": [str(x) for x in cmd], "exit_code": code, "seconds": round(time.monotonic() - started, 3), "log": name + ".log", "runtime_environment": {key: run_env.get(key, "") for key in ["GOTOOLCHAIN", "GOTRACEBACK", "GODEBUG", "GOMAXPROCS", "GOEXPERIMENT", "GOROOT"]}}
+        record = {"name": name, "command": [str(x) for x in cmd], "exit_code": code, "seconds": round(time.monotonic() - started, 3), "log": name + ".log", "cwd": str(cwd or root), "runtime_environment": {key: run_env.get(key, "") for key in ["GOTOOLCHAIN", "GOTRACEBACK", "GODEBUG", "GOMAXPROCS", "GOEXPERIMENT", "GOROOT", "GOCACHE"]}}
         with (out / "results.jsonl").open("a", encoding="utf-8") as stream:
             stream.write(json.dumps(record) + "\n")
         print(json.dumps(record), flush=True)
@@ -94,6 +95,28 @@ def main():
             raise RuntimeError("canary build failed: " + arm)
         binaries[("canary", arm)] = executable
     results = []
+    created_cold_files = set()
+    cleanup_warnings = {}
+    execution_id = uuid.uuid4().hex[:12]
+
+    def cleanup_cold(path):
+        if path not in created_cold_files:
+            raise ValueError("refusing to remove a file not created by this diagnostic run")
+        for delay in [0, 0.05, 0.1, 0.2, 0.4]:
+            if delay:
+                time.sleep(delay)
+            try:
+                path.unlink(missing_ok=True)
+                created_cold_files.remove(path)
+                return
+            except PermissionError as error:
+                # Antivirus or the loader can retain a terminated image briefly.
+                # Keep the workload outcome; retry this owned file at the end.
+                last_error = error
+        cleanup_warnings[str(path)] = {"path": str(path), "error": str(last_error), "winerror": getattr(last_error, "winerror", None)}
+        (out / "cleanup-warnings.json").write_text(json.dumps(list(cleanup_warnings.values()), indent=2) + "\n")
+        print("CLEANUP_WARNING " + str(last_error), flush=True)
+
     signature = b"fatal error: concurrent map writes"
     for workload in ["canary", "host-retry", "cli-full"]:
         for iteration in range(args.full_rounds if workload == "cli-full" else args.rounds):
@@ -104,9 +127,15 @@ def main():
                 binary = binaries[(workload, "stock" if arm == "asyncpreemptoff" else arm)]
                 # A distinct file creates a new image section; physical hard faults
                 # remain OS-dependent and are not claimed merely from a fresh name.
-                cold = out.parent / ("cold-" + workload + "-" + arm + "-" + str(iteration) + ".exe")
+                cold = out.parent / ("cold-" + execution_id + "-" + workload + "-" + arm + "-" + str(iteration) + ".exe")
+                if cold.exists():
+                    raise ValueError("refusing to overwrite an existing cold image")
                 shutil.copyfile(binary, cold)
-                run_env = dict(env)
+                created_cold_files.add(cold)
+                runtime_arm = "patched" if arm == "patched" else "stock"
+                toolchain = patched if runtime_arm == "patched" else source
+                run_env = dict(env, GOROOT=str(toolchain), GOCACHE=str(out.parent / ("gocache-" + runtime_arm)))
+                run_env["PATH"] = str(toolchain / "bin") + os.pathsep + env.get("PATH", "")
                 if arm == "asyncpreemptoff":
                     run_env["GODEBUG"] = "asyncpreemptoff=1"
                 name = f"{workload}-{iteration + 1:03d}-{arm}"
@@ -115,13 +144,16 @@ def main():
                     options = ["-test.run", "^TestHostRetry", "-test.count", str(args.count), "-test.timeout", "45s", "-test.v"]
                 elif workload == "cli-full":
                     options = ["-test.count", "1", "-test.timeout", "120s", "-test.v"]
-                code, output = command(name, [str(cold)] + options, run_env, timeout=130 if workload == "cli-full" else 55)
-                cold.unlink(missing_ok=True)
+                code, output = command(name, [str(cold)] + options, run_env, timeout=130 if workload == "cli-full" else 55, cwd=root / "internal/cli" if workload != "canary" else root)
                 if workload == "canary" and code == 0 and b"CANARY_OK" not in output:
                     code = 125
                 results.append({"workload": workload, "arm": arm, "round": iteration + 1, "exit_code": code, "original_signature": signature in output})
                 (out / "observations.json").write_text(json.dumps(results, indent=2) + "\n")
+                cleanup_cold(cold)
+    for cold in list(created_cold_files):
+        cleanup_cold(cold)
     summary = {workload: {arm: {"runs": sum(x["workload"] == workload and x["arm"] == arm for x in results), "failures": sum(x["workload"] == workload and x["arm"] == arm and x["exit_code"] != 0 for x in results), "original_signature": sum(x["workload"] == workload and x["arm"] == arm and x["original_signature"] for x in results)} for arm in ["stock", "asyncpreemptoff", "patched"]} for workload in ["canary", "host-retry", "cli-full"]}
+    summary["cleanup"] = {"warnings": list(cleanup_warnings.values()), "pending_files": sorted(str(path) for path in created_cold_files), "affects_workload_results": False}
     summary["interpretation"] = "Diagnostic evidence only. All-green does not confirm a root cause; compare baseline failures and exact signatures before attributing the original crash."
     summary["binaries_sha256"] = {workload + "/" + arm: hashlib.sha256(binary.read_bytes()).hexdigest() for (workload, arm), binary in binaries.items()}
     (out / "summary.json").write_text(json.dumps(summary, indent=2) + "\n")
