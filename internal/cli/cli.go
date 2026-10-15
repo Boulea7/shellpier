@@ -23,6 +23,8 @@ Your AI Agent's computer:
   shellpier terminal open TICKET --out NEW-DIRECTORY
   shellpier jobs start TICKET --command 'COMMAND' --operation-id ID
   shellpier forward TICKET --listen 127.0.0.1:0 --to HOST:PORT
+  shellpier forward TICKET --dynamic --listen 1080
+  shellpier proxy TICKET --to HOST:PORT
   shellpier files list TICKET . [--json]
   shellpier ssh-config <access-ticket or @file> --out NEW-DIRECTORY
   shellpier upload <access-ticket or @file> LOCAL REMOTE
@@ -136,7 +138,7 @@ func Run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 	case "check":
 		return check(ctx, args[1:], stdout, stderr)
 	case "upload", "download":
-		return transferWithProgress(ctx, args[0], args[1:], stdout, stderr, diagnostics)
+		return transferWithInputAndProgress(ctx, args[0], args[1:], stdin, stdout, stderr, diagnostics)
 	case "keygen":
 		return keygen(args[1:], stdout, stderr)
 	case "completion":

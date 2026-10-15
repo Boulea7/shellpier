@@ -41,6 +41,7 @@ func forwardListenerAddress(address string) (string, error) {
 func forward(parent context.Context, args []string, stdout, stderr io.Writer) error {
 	f := flags("forward", stderr)
 	listen := f.String("listen", "127.0.0.1:0", "loopback listener; a port alone uses 127.0.0.1")
+	dynamic := f.Bool("dynamic", false, "listen as a SOCKS5 CONNECT proxy through the remote host")
 	reverse := f.Bool("reverse", false, "listen on the remote host and connect to a local target")
 	target := f.String("to", "", "destination host:port; on the control computer with --reverse")
 	timeout := f.Duration("timeout", 0, "total forwarding lifetime; 0 uses ticket lifetime")
@@ -57,9 +58,15 @@ func forward(parent context.Context, args []string, stdout, stderr io.Writer) er
 	if err != nil {
 		return err
 	}
-	destination, err := sshd.NormalizeForwardTarget(*target)
-	if err != nil {
-		return err
+	if *dynamic && (*reverse || *target != "") {
+		return errors.New("dynamic forwarding cannot be combined with --to or --reverse")
+	}
+	var destination string
+	if !*dynamic {
+		destination, err = sshd.NormalizeForwardTarget(*target)
+		if err != nil {
+			return err
+		}
 	}
 	if err := retry.Validate(); err != nil {
 		return err
@@ -115,6 +122,9 @@ func forward(parent context.Context, args []string, stdout, stderr io.Writer) er
 		RemoteAddress string `json:"remote_address,omitempty"`
 		LocalTarget   string `json:"local_target,omitempty"`
 	}{SchemaVersion: 1, Command: "forward", Event: "listening", Direction: "local", LocalAddress: listener.Addr().String(), Target: destination}
+	if *dynamic {
+		event.Direction = "dynamic"
+	}
 	if *reverse {
 		event.Direction = "reverse"
 		event.RemoteAddress = event.LocalAddress
@@ -124,7 +134,9 @@ func forward(parent context.Context, args []string, stdout, stderr io.Writer) er
 	if *machine {
 		err = json.NewEncoder(stdout).Encode(event)
 	} else {
-		if *reverse {
+		if *dynamic {
+			_, err = fmt.Fprintf(stdout, "SOCKS5 proxy listening: %s (remote DNS; TCP CONNECT only)\nKeep this process open; transport loss stops forwarding.\n", event.LocalAddress)
+		} else if *reverse {
 			_, err = fmt.Fprintf(stdout, "Reverse forward listening on remote host: %s -> local %s\nKeep this process open; transport loss stops forwarding.\n", event.RemoteAddress, destination)
 		} else {
 			_, err = fmt.Fprintf(stdout, "Forward listening: %s -> %s\nKeep this process open; transport loss stops forwarding.\n", event.LocalAddress, destination)
@@ -169,6 +181,10 @@ func forward(parent context.Context, args []string, stdout, stderr io.Writer) er
 			defer workers.Done()
 			defer func() { <-slots }()
 			defer conn.Close()
+			if *dynamic {
+				_ = serveDynamicForward(ctx, conn, client.DialContext)
+				return
+			}
 			dialCtx, done := context.WithTimeout(ctx, sshd.DefaultForwardDialTimeout)
 			var remote net.Conn
 			var err error

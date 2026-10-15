@@ -16,10 +16,18 @@ import (
 )
 
 func transfer(parent context.Context, command string, args []string, stdout, stderr io.Writer) error {
-	return transferWithProgress(parent, command, args, stdout, stderr, stderr)
+	return transferWithInput(parent, command, args, nil, stdout, stderr)
 }
 
-func transferWithProgress(parent context.Context, command string, args []string, stdout, stderr, progressWriter io.Writer) (returnErr error) {
+func transferWithInput(parent context.Context, command string, args []string, stdin io.Reader, stdout, stderr io.Writer) error {
+	return transferWithInputAndProgress(parent, command, args, stdin, stdout, stderr, stderr)
+}
+
+func transferWithProgress(parent context.Context, command string, args []string, stdout, stderr, progressWriter io.Writer) error {
+	return transferWithInputAndProgress(parent, command, args, nil, stdout, stderr, progressWriter)
+}
+
+func transferWithInputAndProgress(parent context.Context, command string, args []string, stdin io.Reader, stdout, stderr, progressWriter io.Writer) (returnErr error) {
 	f := flags(command, stderr)
 	retry := clientRetryFlags(f)
 	iface := f.String("interface", "", "direct network interface")
@@ -43,6 +51,18 @@ func transferWithProgress(parent context.Context, command string, args []string,
 	positional := f.Args()
 	if len(positional) != 3 || *timeout <= 0 {
 		return fmt.Errorf("usage: shellpier %s [--interface NAME] [--timeout 5m] [--json] TICKET SOURCE DESTINATION", command)
+	}
+	streamUpload := command == "upload" && positional[1] == "-"
+	streamDownload := command == "download" && positional[2] == "-"
+	streaming := streamUpload || streamDownload
+	if streaming && (*recursive || *resume || *resumeState != "" || *preserveTimes || *dryRun || *skipExisting) {
+		return &UsageError{Err: errors.New("stream transfers cannot use recursive, resume, preserve-times, dry-run, or skip-existing")}
+	}
+	if streamUpload && stdin == nil {
+		return errors.New("upload from - requires a standard input stream")
+	}
+	if streamDownload && *asJSON {
+		return &UsageError{Err: errors.New("download to - writes raw bytes and cannot use --json")}
 	}
 	for _, value := range positional[1:] {
 		if value == "" || strings.ContainsRune(value, 0) {
@@ -81,6 +101,15 @@ func transferWithProgress(parent context.Context, command string, args []string,
 		return err
 	}
 	defer client.Close()
+	if streaming {
+		streamCtx, stopStream := context.WithCancel(ctx)
+		defer stopStream()
+		ctx = streamCtx
+		go func() {
+			_ = client.Wait()
+			stopStream()
+		}()
+	}
 	defer func() { returnErr = access.ConnectionError(client, returnErr) }()
 	sf, err := sftp.NewClient(client)
 	if err != nil {
@@ -104,6 +133,12 @@ func transferWithProgress(parent context.Context, command string, args []string,
 	}
 	result := transferSummary{Command: command, Warnings: []string{}}
 	switch {
+	case streamUpload:
+		result.Bytes, err = uploadStream(ctx, sf, stdin, positional[2], progress)
+		result.Files = 1
+	case streamDownload:
+		_, err = downloadStream(ctx, sf, positional[1], stdout, progress)
+		return err
 	case *recursive:
 		result, err = runTransferTree(ctx, src, dst, positional[1], positional[2], exclude, *maxFiles, *maxDepth, progress)
 	case *resume:

@@ -160,6 +160,10 @@ func mcpMakeTool(path []string, spec commandSpec) (mcpTool, bool) {
 		required = append(required, "options")
 	}
 	description := spec.Summary + ". Usage: " + spec.Usage + ". Effects: " + strings.Join(effects, ", ") + ". Output: " + spec.Output + "."
+	if path[0] == "upload" || path[0] == "download" {
+		properties["positionals"].(map[string]any)["description"] = "Source and destination file paths, in CLI order. Local stdin/stdout marker '-' is unavailable over MCP."
+		description = "Transfer files using explicit source and destination paths. MCP reserves stdin/stdout for JSON-RPC; pipe transfers with '-' are unavailable. Effects: " + strings.Join(effects, ", ") + ". Output: bounded transfer summary."
+	}
 	if path[0] == "exec" || (path[0] == "jobs" && path[1] == "start") {
 		description += " A timeout or canceled response does not prove that execution or submission did not occur. Check state before retrying; never automatically replay."
 	}
@@ -190,6 +194,9 @@ func (t mcpTool) arguments(raw json.RawMessage) ([]string, error) {
 	}
 	if len(input.Positionals) < t.minPositionals || len(input.Positionals) > t.maxPositionals {
 		return nil, errors.New("Incorrect number of positional arguments; consult tool usage")
+	}
+	if t.command[0] == "upload" && input.Positionals[0] == "-" || t.command[0] == "download" && input.Positionals[1] == "-" {
+		return nil, errors.New("MCP reserves stdin/stdout for JSON-RPC; use local file paths instead of '-' for transfers")
 	}
 	for _, value := range input.Positionals {
 		if len(value) > 65536 || strings.ContainsRune(value, 0) || strings.HasPrefix(value, "-") {

@@ -14,46 +14,31 @@ import (
 )
 
 func connect(ctx context.Context, mode string, args []string, stdin io.Reader, stdout, stderr io.Writer) error {
-	f := flags(mode, stderr)
-	var retry *clientConnectionOptions
-	if mode != "proxy" {
-		retry = clientRetryFlags(f)
+	if mode == "proxy" {
+		return proxyTarget(ctx, args, stdin, stdout, stderr)
 	}
+	f := flags(mode, stderr)
+	retry := clientRetryFlags(f)
 	iface := f.String("interface", "", "constrain direct TCP routing to this interface (macOS/Linux)")
 	var timeout time.Duration
 	var commandText, script, cwd string
 	var asJSON, noStdin bool
 	var maxOutput int
 	var env environmentValues
-	if mode != "proxy" {
-		f.DurationVar(&timeout, "timeout", 0, "total command timeout; 0 uses the ticket lifetime")
-		f.StringVar(&commandText, "command", "", "exact remote shell command")
-		f.StringVar(&script, "script", "", "read a remote shell command from a local UTF-8 file")
-		f.StringVar(&cwd, "cwd", "", "remote working directory for this command")
-		f.Var(&env, "env", "remote environment NAME=VALUE; repeatable")
-		f.BoolVar(&asJSON, "json", false, "capture bounded stdout, stderr, and exit code as JSON")
-		f.BoolVar(&noStdin, "no-stdin", false, "send EOF instead of forwarding standard input")
-		f.IntVar(&maxOutput, "max-output", 1024*1024, "maximum captured bytes per stream with --json (up to 16 MiB)")
-	}
+	f.DurationVar(&timeout, "timeout", 0, "total command timeout; 0 uses the ticket lifetime")
+	f.StringVar(&commandText, "command", "", "exact remote shell command")
+	f.StringVar(&script, "script", "", "read a remote shell command from a local UTF-8 file")
+	f.StringVar(&cwd, "cwd", "", "remote working directory for this command")
+	f.Var(&env, "env", "remote environment NAME=VALUE; repeatable")
+	f.BoolVar(&asJSON, "json", false, "capture bounded stdout, stderr, and exit code as JSON")
+	f.BoolVar(&noStdin, "no-stdin", false, "send EOF instead of forwarding standard input")
+	f.IntVar(&maxOutput, "max-output", 1024*1024, "maximum captured bytes per stream with --json (up to 16 MiB)")
 	local, commands, separated := splitCommandArgs(f, args)
 	if err := parseFlags(f, local); err != nil {
 		return err
 	}
 	if f.NArg() < 1 {
 		return errors.New("provide an access ticket or @file")
-	}
-	if mode == "proxy" {
-		if f.NArg() != 1 || separated {
-			return errors.New("proxy accepts exactly one ticket")
-		}
-		t, err := access.Read(f.Arg(0))
-		if err != nil {
-			return err
-		}
-		if err := t.Validate("access"); err != nil {
-			return err
-		}
-		return access.Proxy(ctx, t, *iface, stdin, stdout)
 	}
 	if err := retry.Validate(); err != nil {
 		return err
