@@ -1,0 +1,43 @@
+name: Windows runtime diagnostics
+on:
+  workflow_dispatch:
+    inputs:
+      rounds:
+        description: 'Cold process rounds per arm (1-200)'
+        default: '24'
+        required: true
+      count:
+        description: 'Host retry test repetitions per process (1-1000)'
+        default: '50'
+        required: true
+permissions:
+  contents: read
+jobs:
+  compare:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    env:
+      GOTOOLCHAIN: local
+      GOTRACEBACK: system
+      DIAGNOSTIC_ROUNDS: ${{ inputs.rounds }}
+      DIAGNOSTIC_COUNT: ${{ inputs.count }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-go@v7.0.0
+        with:
+          go-version: '1.27.2'
+          cache: true
+      - uses: actions/setup-python@v7.0.0
+        with:
+          python-version: '3.x'
+      - name: Compare stock, asyncpreemptoff, and official runtime guard
+        shell: pwsh
+        run: python scripts/windows_diagnostics.py --rounds "$env:DIAGNOSTIC_ROUNDS" --count "$env:DIAGNOSTIC_COUNT" --out "$env:RUNNER_TEMP/shellpier-diagnostics"
+      - name: Preserve all results including failures
+        if: always()
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: windows-runtime-diagnostics-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/shellpier-diagnostics
+          if-no-files-found: error
+          retention-days: 14
