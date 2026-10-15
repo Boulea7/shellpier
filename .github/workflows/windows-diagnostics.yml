@@ -6,6 +6,14 @@ on:
         description: 'Cold process rounds per arm (1-200)'
         default: '24'
         required: true
+      full_rounds:
+        description: 'Complete CLI suite rounds per arm (0-20)'
+        default: '3'
+        required: true
+      blob_mib:
+        description: 'Read-only canary image size MiB (8-256)'
+        default: '96'
+        required: true
       count:
         description: 'Host retry test repetitions per process (1-1000)'
         default: '50'
@@ -14,13 +22,20 @@ permissions:
   contents: read
 jobs:
   compare:
-    runs-on: windows-latest
-    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-2022, windows-2025]
+        replica: [1, 2]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
     env:
       GOTOOLCHAIN: local
       GOTRACEBACK: system
       DIAGNOSTIC_ROUNDS: ${{ inputs.rounds }}
       DIAGNOSTIC_COUNT: ${{ inputs.count }}
+      DIAGNOSTIC_FULL_ROUNDS: ${{ inputs.full_rounds }}
+      DIAGNOSTIC_BLOB_MIB: ${{ inputs.blob_mib }}
     steps:
       - uses: actions/checkout@v7.0.1
       - uses: actions/setup-go@v7.0.0
@@ -32,12 +47,12 @@ jobs:
           python-version: '3.x'
       - name: Compare stock, asyncpreemptoff, and official runtime guard
         shell: pwsh
-        run: python scripts/windows_diagnostics.py --rounds "$env:DIAGNOSTIC_ROUNDS" --count "$env:DIAGNOSTIC_COUNT" --out "$env:RUNNER_TEMP/shellpier-diagnostics"
+        run: python scripts/windows_diagnostics.py --rounds "$env:DIAGNOSTIC_ROUNDS" --count "$env:DIAGNOSTIC_COUNT" --full-rounds "$env:DIAGNOSTIC_FULL_ROUNDS" --blob-mib "$env:DIAGNOSTIC_BLOB_MIB" --out "$env:RUNNER_TEMP/shellpier-diagnostics"
       - name: Preserve all results including failures
         if: always()
         uses: actions/upload-artifact@v7.0.2
         with:
-          name: windows-runtime-diagnostics-${{ github.run_id }}-${{ github.run_attempt }}
+          name: windows-runtime-diagnostics-${{ matrix.os }}-${{ matrix.replica }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/shellpier-diagnostics
           if-no-files-found: error
           retention-days: 14
