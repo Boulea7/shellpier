@@ -9,7 +9,8 @@
 | 选择安装包或离线复制 | [安装](install.md) |
 | 单机演练、局域网或校园网连接 | [使用场景](workflows.md) |
 | 执行命令、交互终端、传文件与查询参数 | [命令手册](commands.md) |
-| 给 Codex / Claude Code 使用 exec、terminal 与机器接口 | [Agent skill](../skills/shellpier/SKILL.md) |
+| 给 Codex / Claude Code 使用 exec、terminal、jobs 与 MCP | [Agent skill](../skills/shellpier/SKILL.md) |
+| 后台任务、断点传输、转发与用户级服务 | [命令手册](commands.md) · [使用场景](workflows.md) |
 | 使用 Windows 7 / 8 | [Legacy Windows](legacy-windows.md) |
 | 诊断连接失败 | [排障](troubleshooting.md) · [常见问题](faq.md) |
 

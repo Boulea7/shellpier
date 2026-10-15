@@ -28,8 +28,8 @@ PowerShell 的票据参数必须加引号，例如 `'@access.json'`。`@file` �
 | `relay --token-file relay.key` | 运行自托管中继 |
 | `inspect @access.json --json` | 本地校验票据，输出不含凭据的摘要 |
 | `check @access.json --json` | 实际建立 SSH，检查目标身份与可执行性 |
-| `upload @access.json local.txt remote.txt` | 上传单个文件，拒绝覆盖 |
-| `download @access.json remote.txt local.txt` | 下载单个文件，拒绝覆盖 |
+| `upload @access.json local.txt remote.txt` | 上传文件或显式递归目录，拒绝覆盖 |
+| `download @access.json remote.txt local.txt` | 下载文件或显式递归目录，拒绝覆盖 |
 | `keygen --out legacy-keys --json` | 新建 Ed25519 SSH 密钥对，无需系统 ssh-keygen |
 | `completion bash` | 输出补全脚本，支持 Bash/Zsh/Fish/PowerShell 7+ |
 | `version --json` | 查看版本及 OS/架构/Go/VCS 构建信息 |
@@ -89,7 +89,7 @@ shellpier download @access.json remote.txt ./received.txt --timeout 5m --json
 shellpier keygen --out ./legacy-keys --json
 ```
 
-这些检查按需使用。`inspect` 仅检查本地票据，不连接目标；`check` 会建立 SSH 并运行身份检查。`check` 默认超时 20 秒，接受 1 秒至 5 分钟。传输默认超时 5 分钟，支持 `--interface NAME` 与 `--json`，只传单个普通文件，不覆盖目标。上传失败可能留下远端部分文件，先核对再处理；下载失败只清理本次创建的本地部分文件。Windows 远端绝对路径写 `/C:/Users/you/file.txt`。
+这些检查按需使用。`inspect` 仅检查本地票据，不连接目标；`check` 会建立 SSH 并运行身份检查。`check` 默认超时 20 秒，接受 1 秒至 5 分钟。传输默认超时 5 分钟，支持 `--interface NAME` 与 `--json`，默认传单个普通文件，不覆盖目标；目录与续传参数见下表。上传失败可能留下远端部分文件，先核对再处理；下载失败只清理本次创建的本地部分文件。Windows 远端绝对路径写 `/C:/Users/you/file.txt`。
 
 `keygen` 的父目录须存在，输出目录须不存在。它生成私有 `identity` 与 `identity.pub`，stdout 只输出路径和 SHA256 指纹；Legacy 配置使用公钥，私钥留在控制端。未提供 RSA 或密码加密选项。
 
@@ -105,7 +105,7 @@ shellpier exec @access.json --script ./task.sh --cwd /home/you/work --env MODE=t
 
 `shell` 使用当前终端输入，自动恢复本地终端设置并传递尺寸变化；`--command` 可在 PTY 中运行指定命令。`exec` 保持 stdout/stderr 分离，默认转发 stdin，`--no-stdin` 发送 EOF。`--timeout 0` 使用票据有效期；`--cwd` 指定本次目录，`--env NAME=VALUE` 可重复。目标能力以 `capabilities` 为准。
 
-`exec --json` 每路默认捕获 1 MiB，`--max-output` 可调至 16 MiB；超出的输出继续排空并标记 `stdout_truncated` / `stderr_truncated`。按 `stdout_encoding` / `stderr_encoding` 读取 UTF-8 或 base64 数据，并检查 `ok`、`exit_code`。PTY 合并 stdout/stderr，包含回显和终端控制序列，不适合当作结构化命令结果。
+`exec --json` 每路默认捕获 1 MiB，`--max-output` 可调至 16 MiB；超出的输出继续排空并标记 `stdout_truncated` / `stderr_truncated`。按 `stdout_encoding` / `stderr_encoding` 读取 UTF-8 或 base64 数据，并检查 `ok`、`exit_code`、`exit_status_known` 和 `termination_reason`。只有 `exit_status_known=true` 才有确定的远端退出状态；未知时保留兼容值 `exit_code=-1`，不能当作远端命令失败。结束原因包括 `exited`、`canceled`、`expired`、`connection_lost`。PTY 合并 stdout/stderr，包含回显和终端控制序列，不适合当作结构化命令结果。
 
 ## Agent 发现与持久终端
 
@@ -124,7 +124,7 @@ shellpier terminal close --state ./terminal-session/state.json --json
 
 `terminal open` 启动本地控制进程，输出私有状态文件路径；默认终端有效期 3 小时，受票据到期时间限制。支持 `--command`、`--cwd`、重复 `--env`、`--cols`、`--rows` 与 `--term`。状态文件包含控制 secret，不交给目标端或贴入日志。
 
-`read` 始终返回 JSON，`data` 为 base64，使用返回的 `next_cursor` 继续读取。默认每次 64 KiB，`--limit` 最大 1 MiB，`--wait` 最多 30 秒；缓冲区只保留最新 1 MiB，`dropped` 表示请求位置已丢失的字节数。`closed` 与 `exit_code` 描述结束状态。关闭或到期后保留有界私有输出快照，可继续 read/status；结束后自行删除本次终端目录。
+`read` 始终返回 JSON，`data` 为 base64，使用返回的 `next_cursor` 继续读取。默认每次 64 KiB，`--limit` 最大 1 MiB，`--wait` 最多 30 秒；缓冲区只保留最新 1 MiB，`dropped` 表示请求位置已丢失的字节数。`closed` 描述整个终端是否结束；`exit_status_known` 与 `termination_reason` 区分已知退出、取消、到期与连接丢失，不推断 shell 内某条命令完成。关闭或到期后保留有界私有输出快照，可继续 read/status；结束后自行删除本次终端目录。
 
 `write` 使用 `--text` 或 `--file`，二选一；`--file -` 读取 stdin，单次最多 1 MiB。输入按原始字节发送，执行一行命令时需在文件或文本中包含换行。`status` 查看终端元数据，`close` 只关闭该终端，不撤销分享会话；断线不会自动重放输入或命令。
 
@@ -152,3 +152,104 @@ shellpier files remove @access.json empty-dir --dry-run --json
 `--ttl 0` 仍是前台进程，不安装开机服务。直接模式允许长期会话；中继同时要求运营者启用 `relay --allow-persistent`。中继重启会丢失会话。
 
 中继命令可用 `--init-key NEW-FILE` 生成创建密钥后退出；`--listen` 默认 `127.0.0.1:8080`，`--max-sessions` 默认 64，`--max-ttl` 默认 24 小时。原生 HTTPS 需要同时传入 `--tls-cert CERT.pem --tls-key KEY.pem`；否则放在 TLS 反向代理后。完整操作见[中继部署](relay.md)。
+
+## 已保存目标与分阶段诊断
+
+```sh
+shellpier targets add lab --ticket ./access.json --json
+shellpier targets list --json
+shellpier targets show lab --json
+shellpier doctor --target target:lab --timeout 20s --json
+shellpier exec target:lab --command whoami --json
+shellpier targets remove lab --json
+```
+
+`targets` 保存私有 access 或 host 票据文件的引用，不复制票据；使用命令仍会校验所需角色。移除名称不删除凭据，也不撤销访问。默认配置目录可通过 `SHELLPIER_CONFIG_DIR` 或 `--config-dir` 指定。远端命令接受 `target:NAME`；引用失效时更新票据与名称。`doctor --target` 按阶段报告票据、网络/SSH 与能力检查，支持 `--interface`、`--retries`、`--retry-min`、`--retry-max`；本机网卡信息不代表目标可达。
+
+## 目录、续传与传输进度
+
+| 参数 | 边界 |
+|---|---|
+| `--recursive` | 目录递归，拒绝符号链接与已有目标文件 |
+| `--exclude '*.tmp'` | 可重复，相对路径或 basename glob；不支持 `**` |
+| `--max-files 10000` | 递归文件数上限，可设 1..100000 |
+| `--max-depth 32` | 递归深度上限，可设 0..128 |
+| `--resume --resume-state ./transfer.json` | 单文件专用，使用私有本地 journal 与本次部分文件；不与递归合用 |
+| `--progress jsonl` | 进度事件写 stderr；`--json` 最终摘要写 stdout |
+
+```sh
+shellpier upload target:lab ./build remote-build --recursive --exclude '*.tmp' --progress jsonl --json
+shellpier download target:lab remote.bin ./received.bin --resume --resume-state ./transfer.json --json
+shellpier files checksum target:lab remote.bin --json
+```
+
+`files checksum` 流式计算远端普通文件的 SHA256。续传只复用匹配本次传输身份的部分文件，不覆盖已完成目标；它不是任意远端文件的追加入口。网络中断后显式再次运行同一续传命令，不自动重放写入。
+
+## 目标端长任务：jobs
+
+目标端先明确允许任务：`share --allow-jobs --output access.json`，或 `host @host.ticket --allow-jobs`。
+
+```sh
+shellpier jobs start target:lab --command 'make test' --operation-id build-001 --json
+shellpier jobs operation target:lab build-001 --json
+shellpier jobs list target:lab --json
+shellpier jobs status target:lab JOB_ID --json
+shellpier jobs logs target:lab JOB_ID --stdout-cursor 0 --stderr-cursor 0 --json
+shellpier jobs wait target:lab JOB_ID --timeout 30m --json
+shellpier jobs cancel target:lab JOB_ID --json
+```
+
+`start` 支持 `--script`、`--cwd`、重复 `--env`；默认任务期限 3 小时，仍受目标分享期限约束。`wait` 默认最多 3 小时，其余查询默认 20 秒。目标 host 默认保留 128 个任务记录、同时运行 4 个任务；每个任务 stdout/stderr 各保留最新 1 MiB，日志通过各自绝对 cursor 读取。host 的 `--max-jobs`、`--max-running-jobs`、`--job-log-limit` 可分别调整为最多 1024、64、16 MiB，具体限制见 schema。
+
+SSH 断开后任务继续，目标 host 停止或到期会取消任务；进程重启不恢复任务。提交响应丢失时，用 `jobs operation` 按原 operation ID 只读查询，取得 job ID 后读取状态和日志。同一 host 内保留完成记录，满表拒绝新增；相同 ID、相同内容的 start 返回原任务，不同内容拒绝。此去重不跨 host 重启，也不回滚 shell 副作用。
+
+## 本地端口转发
+
+```sh
+# 目标端只允许这一精确目标地址
+shellpier share --allow-forward 127.0.0.1:8080 --output access.json
+# 控制端打印实际分配的本地端口，保持进程运行
+shellpier forward @access.json --to 127.0.0.1:8080 --listen 127.0.0.1:0 --json
+```
+
+`--allow-forward` 可重复，`host` 同样支持；目标 host 全局最多 8 条并发转发连接。控制端仅监听 loopback，`--timeout 0` 使用票据期限；停止进程会关闭转发。它承载 TCP，不自动发现目标服务或扩大允许范围。
+
+## Terminal 请求确认、等待与可选日志
+
+```sh
+shellpier terminal open target:lab --out ./terminal-session --log-limit 8388608 --json
+shellpier terminal write --state ./terminal-session/state.json --file ./input.txt --operation-id input-001 --json
+shellpier terminal operation --state ./terminal-session/state.json --operation-id input-001 --json
+shellpier terminal wait --state ./terminal-session/state.json --wait 30s --json
+```
+
+`write --operation-id` 返回 `status`、`bytes_written` 与 `dedup_scope=worker_lifetime`：`completed` 只表示字节已交给 SSH，不能证明命令执行完成；`uncertain` 不应自动重发。活 worker 最多保留 256 个 ID（包括完成记录），满后拒绝新 ID；同 ID 不同内容拒绝，相同内容返回已有结果。worker 关闭或重启后不保证去重，失踪记录不代表输入未送达。
+
+`wait` 默认等待 30 秒，范围 0..30 秒；超时返回 `closed=false`，仅等待整个终端结束。`--log-limit` 默认 0 关闭，最大 67108864；日志固定为新终端目录中的私有 `output.log`，不覆盖、不轮转、不恢复。达到上限或慢盘队列饱和时丢弃日志记录并设置 `log.truncated`，错误写入 `log.error`，SSH 输出继续。`log.complete` 表示已接受的队列完成写入与关闭，不表示没有截断。进程崩溃可能留下部分日志，默认内存环形缓冲仍为 1 MiB。
+
+## MCP stdio 接入
+
+```sh
+shellpier mcp serve --timeout 1m --max-concurrent 4 --max-output 262144
+```
+
+通过 stdin/stdout 承载 MCP 协议，支持 `2026-07-28` 与 `2025-11-25`；不要向协议 stdout 混入普通日志。工具按有界命令契约执行，远端操作必须使用显式 `@FILE` 或 `target:NAME`，不传内联凭据。2026 模式无状态、每个请求携带协议元数据；2025 模式执行初始化握手。`jobs start` 工具必须提供稳定 `operation-id`。单次工具默认最多 1 分钟（最大 5 分钟）、默认 4 个并发（1..16）、输出默认 256 KiB（1 KiB..1 MiB）。取消调用不回滚已经产生的副作用。
+
+
+## 用户级服务：service
+
+```sh
+shellpier targets add host-lab --ticket ./invitation/host.ticket
+shellpier service plan lab --ticket target:host-lab --json
+shellpier service install lab --ticket target:host-lab --autostart --json
+shellpier service start lab --json
+shellpier service status lab --json
+shellpier service stop lab --json
+shellpier service uninstall lab --json
+```
+
+`plan` 只输出计划，`install` 创建用户级配置但不立即启动；`start` 才启动当前会话。`--autostart` 显式选择以后登录时启动，不指定则不设置登录自启。`plan/install` 还接受 `--shell`、`--work-dir`、`--keep-awake`、`--allow-jobs`；所有动作支持 `--dry-run`、`--json` 和 `--config-dir`。
+
+服务复用已有私有 host 票据，不创建或续期授权；有限票据仍会到期。start 校验安装时绑定的票据身份，换成另一会话 ID 后拒绝启动，需要显式卸载、重新安装。停止或卸载不删除票据；中继撤销未确认时用原 host 票据执行 `revoke`。这是当前用户的生命周期管理，不保证注销、睡眠或系统重启后的所有任务恢复。
+
+MCP 输出被截断时检查 `truncated`，不要把截断文本当完整结果。取消或超时不证明远端没有执行；任务提交返回 `outcome=unknown` 时保留原 operation ID，查询状态或用同 ID、同内容确认原提交，不生成新 ID 重放。

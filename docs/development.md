@@ -10,6 +10,7 @@
 | `internal/cli` | 命令分发、机器接口、持久终端与会话生命周期 |
 | `internal/access` | 票据、SSH 连接、主机公钥校验与配置生成 |
 | `internal/sshd` | 当前用户 SSH exec、PTY/SFTP 与会话关闭 |
+| `internal/jobs` | host 生命周期内的有界任务、去重与输出缓冲 |
 | `internal/relay` | HTTPS/WSS、角色配对、认证、容量、TTL 与撤销 |
 | `internal/platform` | 文件权限、Unix PTY/Windows ConPTY、命令进程树与防睡眠 |
 | `internal/netutil` | 地址、接口与网络诊断 |
@@ -30,15 +31,15 @@ Run(ctx context.Context, args []string, stdin io.Reader,
 
 使用传入的流输出，由入口处理退出码。使用 `flags` 创建参数集、`parseFlags` 支持选项与位置参数混排；远端命令通过 `splitCommandArgs` 保留 `--` 之后的原始参数；帮助必须先于读取票据、创建文件与网络请求。`Run` 将 `flag.ErrHelp` 转为成功。
 
-新命令在 `schema.go` 的 `commandSpecs` 注册 usage、flags、effects 和 stdio/output 模式；`schema` 与补全从同一列表读取，无需再手写补全命令清单。同步 `cli.go` 分发、顶层帮助和公开命令说明。正文走 stdout，诊断走 stderr；全局 `--json` 的错误由 `Run` 统一输出，命令返回 error，不重复打印错误 JSON。JSON 摘要不直接序列化含私钥或 token 的票据。
+新命令在 `schema.go` / `schema_features.go` 的 `commandSpecs` 注册 usage、flags、effects 和 stdio/output 模式；`schema` 与补全从同一列表读取。同步 `cli.go` 分发、顶层帮助和公开命令说明。MCP 工具从相同 schema 生成，但还须在 `mcp_tools.go` 显式纳入允许列表；有界执行、取消、输出上限和敏感数据处理通过审查后才开放。正文走 stdout，诊断走 stderr；全局 `--json` 的错误由 `Run` 统一输出，命令返回 error，不重复打印错误 JSON。JSON 摘要不直接序列化含私钥或 token 的票据。
 
 票据与配置复用 `access.Read`、`access.WriteConfig`；需要 SSH 时复用 `access.DialRetry`，保留主机公钥校验、TTL 与取消。超时从上游 context 派生，结束时关闭连接、文件与辅助 goroutine。重试只作用于建连，不自动重放远程命令。
 
-exec 保留 stdout/stderr、退出码和输出截断信息；shell 使用 PTY 合并字节流。持久 terminal 的 open/read/write/resize/signal/status/close 通过本机私有控制接口操作同一会话，read 使用绝对 cursor，报告环形缓冲丢失的字节；关闭后保留最多 1 MiB 输出快照。机器能力从目标端 `capabilities` 查询，不能用本机 schema 的平台信息代替。
+exec 保留 stdout/stderr、退出码和输出截断信息；shell 使用 PTY 合并字节流。持久 terminal 通过本机私有控制接口操作同一会话，read 使用绝对 cursor，报告缓冲丢失字节；wait 等待整个终端结束。输入 operation ID 的去重记录覆盖 worker 生命周期，满表拒绝新 ID。jobs 绑定 host context，保留已完成任务以防 ID 被再次执行；SSH 断开不取消 jobs，host 结束则取消。输出和 ID 均有明确容量上限。机器能力从目标端 `capabilities` 查询，不能用本机 schema 的平台信息代替。
 
 ## 文件与平台行为
 
-写入功能明确覆盖政策，失败只清理本次创建且仍能确认归属的文件。传输实现参考 `transfer.go`；本地路径用 `filepath`，远端路径遵循 SFTP 约定。测试覆盖空格、中文、空文件、已有目标、目录误用与权限失败。
+写入功能明确覆盖政策，失败只清理本次创建且仍能确认归属的文件。传输实现参考 `transfer*.go`；本地路径用 `filepath`，远端路径遵循 SFTP 约定。续传 journal 绑定方向、主机公钥、规范路径和源内容，提交保持不覆盖；硬链接不可用时用独占复制并报告非原子可见。目录传输先检查容量、路径冲突和特殊文件。服务管理仅操作可验证归属的用户级资源，plan/dry-run 不修改状态。
 
 OS 专有能力放在 `internal/platform` 或对应包的平台文件，通过 build tags 隔离。涉及服务、防火墙或防睡眠时明确权限、资源归属和恢复方式。Windows 命令测试包括首次启动、退出码与编码；Legacy 保持独立入口。
 

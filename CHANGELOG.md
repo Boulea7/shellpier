@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.3.0-alpha.1 — 2026-10-15
+
+- 新增 host 托管的 `jobs`：SSH 断线后继续、有界任务与日志、operation ID 去重、查询、等待和取消。
+- 新增目录上传下载、排除规则、SHA-256、JSONL 进度，以及基于私有 journal 的单文件续传；继续拒绝覆盖已有目标。
+- 新增精确目标允许列表的 loopback `forward`，并由目标端显式启用。
+- 新增 `mcp serve`，通过 stdio 暴露有界命令工具，支持当前和兼容版协议、取消、输出限制与明确的未知提交状态。
+- 新增 `targets` 私有票据引用、`doctor --target` 分阶段诊断和用户级 `service` 管理；自启需显式启用，服务不延长票据期限。
+- 完善 terminal 结束原因、等待、输入去重/查询与可选私有日志；更新命令 schema、补全、Agent skill 和功能边界文档。
+
 ## v0.2.0-alpha.3 — 2026-10-15
 
 - 新增 `shell` 交互终端：Unix PTY、Windows ConPTY、尺寸同步、信号与退出清理。

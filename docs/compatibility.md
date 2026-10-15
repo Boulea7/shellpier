@@ -44,7 +44,22 @@
 
 `--keep-awake` 自愿启用。macOS 使用 `caffeinate`，Linux 使用 `systemd-inhibit`，依赖本机工具、服务和权限，属于尽力而为；Windows 使用 `SetThreadExecutionState`，不修改电源计划。它不保证阻止关机、强制睡眠或用户合盖行为。
 
-交互终端合并 stdout/stderr，输出可能包含控制序列和回显。Agent 持久终端在控制端保存最多 1 MiB 私有输出快照，可能包含敏感内容；关闭或到期后仍可读取，结束后自行删除。终端关闭不撤销分享，也不回滚已执行命令。
+交互终端合并 stdout/stderr，输出可能包含控制序列和回显。Agent 持久终端在控制端保存最多 1 MiB 私有输出快照，可能包含敏感内容；关闭或到期后仍可读取，结束后自行删除。可选 `--log-limit` 明文 output.log 最高 64 MiB，异步写入拥塞时会丢日志字节；它不替代 ring cursor。`terminal wait` 观察整个终端结束；write 的 operation ID 在同一 worker 生命周期保留最多 256 条，满时拒绝新 ID。未知结果不能视为输入未送达。终端关闭不撤销分享，也不回滚已执行命令。
+
+## 新能力的生命周期
+
+| 能力 | 有效范围与限制 |
+|---|---|
+| Jobs | host 须启用 `--allow-jobs`；跨 SSH 连接断开继续，host 退出或 TTL 到期结束；stdout/stderr ring 有界，cursor 可报告丢失字节 |
+| Job/start 操作 ID | 同一 host manager 生命周期；完成记录不自动淘汰，默认任务总表 128、并发 4，满表拒绝新任务；同操作 ID 必须对应相同内容 |
+| Terminal write 操作 ID | 同一 worker 生命周期，最多 256 个；满表拒绝新增，worker 消失后不能用旧 ID 证明结果；wait 等整个终端结束 |
+| 递归/续传 | 递归支持排除与容量限制，续传为单文件；保持不覆盖，支持 checksum 与进度；owned partial/journal 明文保存内容或路径，失败不自动回滚已传文件 |
+| Forward | host 精确 `--allow-forward HOST:PORT`，控制端 loopback 监听；无 SOCKS、公开监听或反向转发；断线关闭，不重放数据 |
+| MCP | stdio 2026-07-28 / 2025-11-25 初始化；显式工具白名单，票据用 `@FILE` / `target:NAME` 引用；jobs start 必须有稳定 operation ID，不自动重放变更；无 Web 前端 |
+| Targets | 本地别名引用已有私有票据文件，不复制、不续期；移除别名不撤销远端访问 |
+| User service | Linux systemd user、macOS LaunchAgent、Windows 当前用户计划任务；注册与启动分开，可选登录自启；不做管理员或系统启动服务，不续期有限票据 |
+
+一次 SSH 调用取消与 host 生命周期不是同一边界：长任务须用 jobs 自己的 status/logs/wait/cancel 观察和结束。start 响应丢失时保留原操作 ID，先查询或用同 ID、同内容重试，不另造 ID 重复提交。日志、PTY 输出和传输进度均不代表命令级事务提交。
 
 ## 网络条件
 
@@ -55,5 +70,7 @@
 ## 已测试范围
 
 项目测试覆盖 SSH 命令/SFTP、访问授权、连接撤销、TTL 和进程树清理；Windows 使用 Job Object，Unix 使用进程组。Legacy parser/COM mock 覆盖账户字段、失败处理、默认实例拒绝和二进制校验。
+
+用户级服务通过三平台隔离管理器测试和 Windows 交叉编译。macOS 另以真实 LaunchAgent 验证计划、安装、启动、SSH 连接、状态、重复启动、停止和卸载，测试资源已清理；Linux/Windows 的真实服务管理器及各平台登录自启仍待实机验收。CI 状态以对应提交的实际运行结果为准。
 
 自动化测试见 [GitHub Actions](https://github.com/Boulea7/shellpier/actions)。最低系统版本、各 CPU 架构和真实校园代理/热点组合未全部实机测试；Legacy 的新实例安装、SYSTEM 到期、防火墙清理及完整 Plink 路线尚未在 Win7/8 上完成端到端测试。

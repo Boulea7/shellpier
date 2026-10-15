@@ -33,7 +33,7 @@ On a network where the two computers can reach each other:
 
 On macOS/Linux, replace `.\shellpier.exe` with `./shellpier`. `access.json` grants access; share it only with the intended person or agent.
 
-For an interactive terminal, use `shellpier shell @access.json`. Agents can use `shellpier --json exec @access.json --command whoami` and discover interfaces with `shellpier --json schema`.
+For an interactive terminal, use `shellpier shell @access.json`. Agents can use `shellpier --json exec @access.json --command whoami` or `shellpier mcp serve`. Background jobs, directory transfers/resume, forwarding and user services are covered in the [command reference](docs/commands.md); discover interfaces with `shellpier --json schema`.
 
 Across NAT, including many campus and hotspot networks, configure your own or your team's [relay](docs/relay.md). See the [workflows](docs/workflows.md) for more examples.
 

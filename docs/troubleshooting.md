@@ -7,6 +7,7 @@
 ```sh
 ./shellpier version
 ./shellpier doctor --json
+./shellpier doctor --target @access.json --timeout 20s --json
 ```
 
 用[单机演练](workflows.md#1-单机演练不需要外网或中继)验证 `share → connect`。本机成功后，直接模式从另一台机器连接；中继模式在两端分别检查：
@@ -67,3 +68,32 @@
 | [PuTTY](https://www.chiark.greenend.org.uk/~sgtatham/putty/latest.html) | Windows 的现有 SSH 客户端连接 | PuTTY/Plink 本身不让目标变得可达，也不把原始 SSH 变成 HTTPS |
 
 这些工具需从官方来源单独下载和配置。
+
+## 新命令的状态边界
+
+| 现象 | 处理 |
+|---|---|
+| `target:NAME` 找不到票据 | 用 `targets show NAME --json` 核对引用，保留票据私密；名称本身不保存新授权 |
+| exec 返回 `exit_code=-1` | 看 `exit_status_known` 与 `termination_reason`；取消、到期、连接丢失不等于已知远端退出码 |
+| terminal 输入响应丢失 | 有 operation ID 时先 `terminal operation` 查询；`completed` 只确认字节提交，未知状态不自动重发 |
+| operation 缓存满 | 同一 worker 的 256 条记录不淘汰；已有 ID 仍可查询，新 ID 被拒绝；不要用重启来掩盖未知输入结果 |
+| terminal wait 返回 `closed=false` | 有界等待结束，终端可能仍运行；继续查询，不把输出安静当命令完成 |
+| `output.log` 比终端输出短 | 看 `log.truncated/error`；容量或慢盘会丢日志，但不阻塞 SSH；默认环形缓冲也只留最新 1 MiB |
+| jobs 功能被拒绝 | 目标端需显式 `--allow-jobs`；查询目标 capabilities；不能在客户端单方面开启 |
+| 断线后找不到 job | 任务仅跨 SSH 断线保留，不跨 host 停止、TTL 或进程重启恢复 |
+| forward 目标被拒绝 | `--to` 必须匹配 host 的显式 `--allow-forward HOST:PORT`；并发连接受 host 全局 8 槽限制 |
+| 续传拒绝目标或 journal | 保留部分文件与私有 journal 核对身份；不改写为强制覆盖；递归传输不能使用 resume |
+
+诊断输出只分享脱敏阶段信息。票据、终端状态 secret、日志与任务输出均可能包含敏感内容，不附入公开 Issue。
+
+
+## 服务与 MCP
+
+| 现象 | 处理 |
+|---|---|
+| service install 后没有进程 | 安装不启动；执行 `service start NAME`；`--autostart` 只选择以后登录自启 |
+| 服务票据仍在却无法启动 | 检查 host 角色与期限；服务不会续期。会话 ID 已换时显式卸载、重新安装 |
+| service stop/uninstall 未确认撤销 | 保留 host 票据，执行 `revoke` 确认中继撤销；卸载不删除票据 |
+| MCP 协议版本不匹配 | 使用支持的 2026-07-28 无状态请求或 2025-11-25 初始化流程，不混用握手 |
+| MCP 拒绝远端工具参数 | 显式传 `@FILE` 或 `target:NAME`；jobs start 还需稳定 operation ID |
+| MCP 输出截断或任务 outcome unknown | 截断不是完整结果，取消不是回滚；保留原 operation ID 查询或确认，不新建 ID 重新提交 |

@@ -129,6 +129,37 @@ Windows 7/8 请使用[独立 Legacy 指南](legacy-windows.md)，支持范围见
 
 需要长期前台会话时明确选择 `share --ttl 0` 或 `invite --ttl 0`；中继还必须配置 `--allow-persistent`。这不会安装开机服务，也不能跨中继重启恢复。
 
-`--keep-awake` 自愿开启，需要平台机制正常工作，不保证锁屏、合盖、强制睡眠、注销或重启后持续连接。需要服务管理器时由用户另行配置，并记录停止与凭据更新方式。
+`--keep-awake` 自愿开启，需要平台机制正常工作，不保证锁屏、合盖、强制睡眠、注销或重启后持续连接。需要用户级后台管理时使用 `service plan/install/start`，安装与启动是两个独立动作。
 
 `share`/`host` 中继网络中断后，在有效期内按有界指数退避与抖动重连，默认等待范围 1–30 秒，连接稳定 10 秒后复位。取消、到期、认证失败或撤销会立即停止。控制端仅在 SSH 建连前对暂时网络错误有限重试；已经开始的命令和传输不自动重放。参数见[命令手册](commands.md)。重试写文件、部署等操作前，先检查目标端副作用。stop/TTL 不回滚已产生的副作用。
+
+## 反复使用同一目标
+
+```sh
+./shellpier targets add lab --ticket ./access.json
+./shellpier doctor --target target:lab --json
+./shellpier exec target:lab --command whoami --json
+```
+
+名称引用私有票据文件，不延长授权。`targets remove lab` 只移除名称，结束访问仍用 stop/revoke。
+
+## 构建任务与终端上下文的选择
+
+希望断开控制端 SSH 后任务仍继续时，目标端启用 `--allow-jobs`，用 `jobs start → status/logs/wait → cancel`。保存 start 返回的任务 ID；重连后用 ID 查询，不重新提交命令。任务留在目标 host 内存中，host 停止、到期或重启都会结束这条生命周期。
+
+需要 shell 上下文时使用 `terminal`：它由控制端 worker 保持 SSH，支持连续输入；`terminal wait` 只等待整个终端关闭。输入响应丢失时，使用原 `--operation-id` 查询；不要从“没收到响应”推断未执行。去重只覆盖同一活 worker，最多 256 条 ID。
+
+大目录传输用 `--recursive --exclude '*.tmp'`，大单文件中断恢复用 `--resume`；两者不混用。`--progress jsonl` 的事件在 stderr，可与 stdout 的最终 JSON 摘要分别保存。具体命令见[命令手册](commands.md)。
+
+
+## 把已有 host 票据交给用户级服务
+
+```sh
+./shellpier service plan lab --ticket ./invitation/host.ticket --json
+./shellpier service install lab --ticket ./invitation/host.ticket --json
+./shellpier service start lab --json
+```
+
+需要以后登录自动启动时，仅在安装命令加 `--autostart`；安装本身不立即启动。也可先把 host 票据登记为 target，再传 `--ticket target:NAME`。服务不续期票据，有限授权到期后仍停止；更新成不同会话 ID 的票据需卸载后重新安装，避免服务悄悄指向另一目标。
+
+MCP 客户端可启动 `shellpier mcp serve` 接入同一组有界工具。2026 模式逐请求携带元数据，2025 模式先初始化；远端操作显式指定票据引用。提交 jobs 时固定 operation ID，遇到 unknown 先查询原提交，输出截断或取消均不能证明操作没有副作用。
