@@ -193,6 +193,17 @@ func TestForwardCLIRefusalAndTransportLoss(t *testing.T) {
 				}
 				defer conn.Close()
 				_, _ = conn.Write([]byte("request"))
+				_ = conn.SetReadDeadline(time.Now().Add(time.Second))
+				var b [1]byte
+				if _, err := conn.Read(b[:]); err == nil {
+					t.Fatal("denied stream survived")
+				}
+				select {
+				case err := <-done:
+					t.Fatalf("request failure stopped listener: %v", err)
+				case <-time.After(30 * time.Millisecond):
+				}
+				hostCancel()
 			}
 			select {
 			case err := <-done:

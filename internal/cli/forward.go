@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"flag"
 	"fmt"
 	"io"
 	"net"
@@ -47,12 +48,26 @@ func forward(parent context.Context, args []string, stdout, stderr io.Writer) er
 	timeout := f.Duration("timeout", 0, "total forwarding lifetime; 0 uses ticket lifetime")
 	machine := f.Bool("json", false, "emit listener metadata as JSON")
 	iface := f.String("interface", "", "direct SSH network interface")
+	var locals localForwardFlags
+	f.Var(&locals, "local", "local LISTEN=HOST:PORT mapping; repeat up to 16 times")
 	retry := clientRetryFlags(f)
 	if err := parseFlags(f, args); err != nil {
 		return err
 	}
 	if f.NArg() != 1 || *timeout < 0 {
 		return errors.New("usage: shellpier forward TICKET --to HOST:PORT [--listen 127.0.0.1:0]")
+	}
+	if len(locals) > 0 {
+		conflict := false
+		f.Visit(func(option *flag.Flag) {
+			switch option.Name {
+			case "listen", "to", "reverse", "dynamic":
+				conflict = true
+			}
+		})
+		if conflict {
+			return errors.New("--local cannot be combined with --listen, --to, --reverse or --dynamic")
+		}
 	}
 	localAddress, err := forwardListenerAddress(*listen)
 	if err != nil {
@@ -62,7 +77,7 @@ func forward(parent context.Context, args []string, stdout, stderr io.Writer) er
 		return errors.New("dynamic forwarding cannot be combined with --to or --reverse")
 	}
 	var destination string
-	if !*dynamic {
+	if !*dynamic && len(locals) == 0 {
 		destination, err = sshd.NormalizeForwardTarget(*target)
 		if err != nil {
 			return err
@@ -93,6 +108,9 @@ func forward(parent context.Context, args []string, stdout, stderr io.Writer) er
 		return err
 	}
 	defer client.Close()
+	if len(locals) > 0 {
+		return forwardMultiple(ctx, client, locals, *machine, stdout, stderr)
+	}
 	var listener net.Listener
 	if *reverse {
 		listener, err = client.Listen("tcp", localAddress)
@@ -108,7 +126,7 @@ func forward(parent context.Context, args []string, stdout, stderr io.Writer) er
 	}
 	// A transport loss ends this listener, including all accepted connections.
 	lost := make(chan error, 1)
-	refused := make(chan error, 1)
+	var warning sync.Once
 	go func() { err := client.Wait(); lost <- err; cancel(); _ = listener.Close() }()
 	stop := context.AfterFunc(ctx, func() { _ = client.Close(); _ = listener.Close() })
 	defer stop()
@@ -160,8 +178,6 @@ func forward(parent context.Context, args []string, stdout, stderr io.Writer) er
 					return ctx.Err()
 				}
 				select {
-				case cause := <-refused:
-					return fmt.Errorf("forward connection failed or target was not allowed; forwarding stopped: %w", cause)
 				case cause := <-lost:
 					return errors.Join(errors.New("SSH connection closed; forwarding stopped without replay"), cause)
 				default:
@@ -182,7 +198,9 @@ func forward(parent context.Context, args []string, stdout, stderr io.Writer) er
 			defer func() { <-slots }()
 			defer conn.Close()
 			if *dynamic {
-				_ = serveDynamicForward(ctx, conn, client.DialContext)
+				_ = serveDynamicForward(ctx, conn, func(dialCtx context.Context, network, address string) (net.Conn, error) {
+					return pendingForwardDial(dialCtx, client, conn, network, address)
+				})
 				return
 			}
 			dialCtx, done := context.WithTimeout(ctx, sshd.DefaultForwardDialTimeout)
@@ -191,15 +209,13 @@ func forward(parent context.Context, args []string, stdout, stderr io.Writer) er
 			if *reverse {
 				remote, err = (&net.Dialer{}).DialContext(dialCtx, "tcp", destination)
 			} else {
-				remote, err = client.DialContext(dialCtx, "tcp", destination)
+				remote, err = pendingForwardDial(dialCtx, client, conn, "tcp", destination)
 			}
 			done()
 			if err != nil {
-				select {
-				case refused <- err:
-				default:
-				}
-				cancel()
+				warning.Do(func() {
+					_, _ = io.WriteString(stderr, "Forward destination connection failed; listener remains available.\n")
+				})
 				return
 			}
 			defer remote.Close()
