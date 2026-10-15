@@ -54,7 +54,8 @@
 | Job/start 操作 ID | 同一 host manager 生命周期；完成记录不自动淘汰，默认任务总表 128、并发 4，满表拒绝新任务；同操作 ID 必须对应相同内容 |
 | Terminal write 操作 ID | 同一 worker 生命周期，最多 256 个；满表拒绝新增，worker 消失后不能用旧 ID 证明结果；wait 等整个终端结束 |
 | 递归/续传 | 递归支持排除与容量限制，续传为单文件；默认不覆盖，`--skip-existing` 直接跳过已有普通文件，续传内部自动校验，支持进度；owned partial/journal 明文保存内容或路径，失败不自动回滚已传文件 |
-| Forward | 完整模式默认允许 TCP，`--allow-forward` 可选限制正向精确目标；支持本地与反向 loopback 监听、原生 OpenSSH `-L/-D/-R`；断线关闭，不重放数据 |
+| Forward | 完整模式默认允许 TCP，`--allow-forward` 可选限制正向精确目标；支持本地与反向 loopback 监听、内置 SOCKS5 CONNECT、stdin/stdout TCP 字节桥及原生 OpenSSH `-L/-D/-R`；断线关闭，不重放数据 |
+| 管道传输 | upload 的本地路径 `-` 读取 stdin，download 的本地目标 `-` 输出原始字节；不提供续传或元数据保留，二进制管道还取决于调用 shell 的字节处理 |
 | MCP | stdio 2026-07-28 无状态请求 / 2025-11-25 初始化；显式工具白名单，票据用 `@FILE` / `target:NAME` 引用；jobs start 必须有稳定 operation ID，不自动重放变更；无 Web 前端 |
 | Targets | 本地别名引用已有私有票据文件，不复制、不续期；移除别名不撤销远端访问 |
 | User service | Linux systemd user、macOS LaunchAgent、Windows 当前用户计划任务；注册与启动分开，可选登录自启；不做管理员或系统启动服务，不续期有限票据 |

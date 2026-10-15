@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.6.0-alpha.1 — 2026-10-16
+
+- 新增内置 SOCKS5 CONNECT：`forward --dynamic --listen 1080`，支持 IPv4、IPv6 与目标端域名解析，沿用 loopback、TTL 和目的地址限制。
+- 新增 `proxy --to HOST:PORT` stdin/stdout TCP 字节桥，吸收 OpenSSH `-W` 的组合方式；不带 `--to` 的既有代理行为保留。
+- 新增 `upload TICKET - REMOTE` 与 `download TICKET REMOTE -`，无需本地中间文件；仍默认不覆盖，不增加普通传输 SHA 校验。
+- 深化 OpenSSH 等工具的能力对比，明确已吸收机制、仍缺能力及平台边界。
+
 ## v0.5.0-alpha.1 — 2026-10-15
 
 - 简化普通传输：删除 `--verify`、`files checksum` 及公开摘要验证结果，不再默认重复读取整个文件计算 hash。续传内部仍自动绑定来源和已有部分内容，无需手动校验。

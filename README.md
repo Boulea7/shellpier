@@ -33,7 +33,7 @@ ShellPier 让自己的 AI Agent 临时执行另一台电脑上的命令、传输
 
 macOS/Linux 把 `.\shellpier.exe` 换成 `./shellpier`。`access.json` 是私密凭据，请仅交给需要连接的人或 Agent。
 
-交互操作用 `shellpier shell @access.json`；Agent 可用 `shellpier --json exec @access.json --command whoami` 或 `shellpier mcp serve`。目录共享、目录传输、后台任务、正反向端口转发和用户级服务见[命令手册](docs/commands.md)，接口查询用 `shellpier --json schema`。
+交互操作用 `shellpier shell @access.json`；Agent 可用 `shellpier --json exec @access.json --command whoami` 或 `shellpier mcp serve`。目录共享、管道传输、后台任务、正反向端口转发、SOCKS5 代理和用户级服务见[命令手册](docs/commands.md)，接口查询用 `shellpier --json schema`。
 
 只想共享一个文件夹时，加上 `--root DIR`，对方通过文件传输访问该目录，无需配置系统账户或 SSH 服务。
 

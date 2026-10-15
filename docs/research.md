@@ -2,7 +2,7 @@
 
 [返回文档目录](README.md) · [路线图](roadmap.md) · [Legacy 指南](legacy-windows.md)
 
-调研日期：2026-10-15。本文记录 ShellPier v0.5 开发线的能力与选型取舍；构建、平台验收与发行状态分别以对应提交的 CI 和 Release 为准。外部工具的能力以所链接的一手文档为依据，不随 ShellPier 打包或自动安装。
+调研日期：2026-10-16。本文记录 ShellPier v0.6 开发线的能力与选型取舍；构建、平台验收与发行状态分别以对应提交的 CI 和 Release 为准。外部工具的能力以所链接的一手文档为依据，不随 ShellPier 打包或自动安装。
 
 ShellPier 面向当前用户临时开放的 CLI 与 AI 远程操作：建立可到期、固定主机公钥的访问，再执行命令或传文件。已经有系统 SSH、组织网络或文件同步设施时，复用它们往往更简单。
 
@@ -31,11 +31,25 @@ ShellPier 面向当前用户临时开放的 CLI 与 AI 远程操作：建立可�
 | 命令与终端 | exec、PTY、交互转义键及多种客户端控制。[ssh][ssh] | 支持 exec、PTY、尺寸同步，另有 Agent terminal/jobs；不解析 OpenSSH 交互转义键，信号能力以 capabilities 为准。原生 ssh 的客户端操作可以继续使用。 |
 | 文件访问策略 | `ForceCommand internal-sftp`、目录隔离及转发开关。[sshd_config][sshd-config] | `--root DIR` 自动进入 SFTP-only，将目录映射为虚拟 `/`；可配合 `sftp-readonly`。不需要管理员权限，不隔离 shell 或整个操作系统。 |
 | 每个凭据的细粒度策略 | authorized_keys 可限制来源、强制命令、PTY 和转发。[sshd][sshd] | 每个 host 使用单个授权公钥和统一访问模式；没有逐公钥命令规则、多组权限或来源策略语言。 |
-| 网络转发 | 本地、远端、动态代理、Unix socket 和隧道设备。[ssh][ssh] | full 模式默认开放 TCP 转发；可选 `--allow-forward` 保留目的地址限制。内置本地转发支持端口简写；反向转发兼容原生 `ssh -R`，远端仅监听 loopback，支持端口 0 自动分配。不提供远端 Unix socket、TUN 或 X11/认证 agent 转发。 |
-| 跳板与配置 | ProxyJump、Host/Match/Include 等客户端配置。[ssh_config][ssh-config] | `targets` 是票据文件别名；不解析完整 ssh_config，也没有原生多跳编排。生成配置的 ProxyCommand 与 ProxyJump 不能直接叠加。 |
+| 网络转发 | 本地、远端、动态代理、Unix socket 和隧道设备。[ssh][ssh] | full 模式默认开放 TCP 转发；可选 `--allow-forward` 保留目的地址限制。内置本地转发支持端口简写与 SOCKS5 CONNECT；反向转发兼容原生 `ssh -R`，远端仅监听 loopback，支持端口 0 自动分配。不提供远端 Unix socket、TUN 或 X11/认证 agent 转发。 |
+| 跳板与配置 | ProxyJump、Host/Match/Include 等客户端配置。[ssh_config][ssh-config] | `targets` 是票据文件别名；不解析完整 ssh_config，也没有原生多跳编排。`proxy --to` 提供类似 `ssh -W` 的字节桥，可组合用户自己的下一跳认证；没有完整自动多票据 ProxyJump。生成配置的 ProxyCommand 与 ProxyJump 不能直接叠加。 |
 | 生命周期 | 连接保活、闲置 channel/连接超时是不同策略。[sshd_config][sshd-config] | 有授权 TTL、命令/任务总时限及 SSH 保活；没有单独的闲置 channel 超时。保活有响应不等于用户仍在操作。 |
 
 认证 agent 指 `ssh-agent` 密钥代理，并非 AI Agent。ShellPier 不增加逐密钥策略语言、CA 或组织权限管理；full 模式按当前账户的远程操作入口设计，默认可使用 jobs 和 TCP 转发。OpenSSH 也明确指出：仍有 shell 权限时，单独关闭转发不能构成可靠隔离。[服务端配置][sshd-config]
+
+### v0.6 新吸收了什么，还缺什么
+
+| 机制 | 原工具已有行为 | ShellPier 本轮落地与剩余差异 |
+|---|---|---|
+| 动态转发 | OpenSSH `-D` 在客户端解析 SOCKS4/5，再通过 SSH 请求远端连接。[ssh][ssh] | v0.5 的服务端已经支持原生 `ssh -D` 所需的 direct-tcpip；v0.6 补齐不依赖外部 ssh 的 `forward --dynamic` 入口，只做 SOCKS5 CONNECT 与目标端域名解析。没有 SOCKS4、BIND、UDP 或透明路由。 |
+| stdio 跳板 | OpenSSH `-W HOST:PORT` 把 stdin/stdout 转为远端 TCP 连接，可组合代理配置。[ssh][ssh] | `proxy --to HOST:PORT` 复用现有 SSH 认证、期限与目的地址限制，无需额外监听。下一跳身份验证仍由调用程序负责；不实现完整 ssh_config 解释器或多票据自动链路。 |
+| 文件管道 | rclone `rcat` 从 stdin 上传，`cat` 输出文件内容；croc 也支持 stdin/stdout。[rcat][rclone-rcat]、[cat][rclone-cat]、[croc 管道][croc] | `upload TICKET - REMOTE` / `download TICKET REMOTE -` 省去本地中间文件，沿用 SFTP，默认不覆盖。不能把不可回放的 stdin 当作可自动重试来源，不与续传或递归等文件状态功能混用。rclone rcat 可覆盖目标，这一点不照搬。 |
+
+可组合跳板的例子：`ssh -o 'ProxyCommand=shellpier proxy target:lab --to %h:%p' user@host`。这里第一跳使用 ShellPier 票据，最终主机仍用普通 SSH 账户与主机密钥验证。生成配置已有的 ProxyCommand 不与 ProxyJump 自动合并。[SSH 配置][ssh-config]
+
+OpenSSH 仍有更完整的系统账户认证、证书/FIDO、逐密钥策略、远端 Unix socket/TUN/X11/认证 agent 转发、客户端配置与交互控制。ShellPier 继续复用原生客户端能力；不把这些缺口统称为已兼容。SFTP 也有独立命令和扩展：例如 OpenSSH `sftp -b -` 的 stdin 是批处理命令，并不是上传 payload；服务端拷贝、权限/所有者操作、fsync 等需逐项确认协议扩展，不能从“能连 sftp”推导全部支持。[sftp][sftp]
+
+研究后的工程判断是先补可直接复用 SSH 数据流的三项功能，普通 share 即可使用，不增加前置检查或许可流程；普通传输继续直接复制，不引入额外 SHA 校验或逐密钥策略配置。多端口同连接、文件清单输入、host 托管可重连 PTY 有价值，但分别引入多资源生命周期、批量路径语义和远端输出/身份恢复，本轮没有仓促实现。Chisel 展示多端口复用；rsync 的 `--files-from` 有自己的路径与递归规则；tmux 的 detach/attach 则由远端服务保存会话，现有控制端 terminal worker 不具备该保证。[Chisel][chisel]、[rsync][rsync]、[tmux][tmux]
 
 ### 目录限定与反向监听为什么这样做
 
@@ -91,13 +105,15 @@ ShellPier 已有直连与 WSS 中继、邀请和撤销、TTL、SSH exec/PTY/SFTP
 
 ## 其他连接路线
 
-[Chisel][chisel] 支持单连接多个端口、HTTP/WebSocket 传输和反向转发，值得吸收的是明确端口即可建立连接的入口；ShellPier 复用已有 SSH 协议，不再增加另一套 SOCKS、UDP 与访问规则。需要长期维护多服务暴露时，可选择 [frp](https://gofrp.org/en/docs/)；它的服务端/客户端配置与公网端口管理不应成为临时连接的前置条件。
+[Chisel][chisel] 支持单连接多个端口、HTTP/WebSocket 传输和反向转发，值得吸收的是明确端口即可建立连接的入口；ShellPier 复用已有 SSH 协议，本轮在既有 SSH 上增加 SOCKS5 CONNECT 入口，不再增加另一套 UDP 与访问规则。需要长期维护多服务暴露时，可选择 [frp](https://gofrp.org/en/docs/)；它的服务端/客户端配置与公网端口管理不应成为临时连接的前置条件。
 
 [sshuttle 的系统要求][sshuttle]包括本地防火墙操作所需权限和远端 Python。它适合将网段流量透明地送入 SSH，代价是本机网络配置与运行环境要求；ShellPier 只吸收按需连通的思路，不引入透明路由、DNS 接管或远端 Python 依赖。
 
 已有组织设施也可考察 [Cloudflare Tunnel SSH](https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/use-cases/ssh/ssh-cloudflared-authentication/)。这些隧道仍需 SSH endpoint，并各有认证、TLS 和运营条件，不会自动提供目标账户登录。
 
 旧 Windows 是独立路线：系统 OpenSSH 可选组件的支持范围见 [Microsoft 文档](https://learn.microsoft.com/en-us/windows-server/administration/openssh/openssh-overview)；Bitvise 与 Plink 的固定版本、许可、签名及安装要求见 [Legacy 指南](legacy-windows.md)。现代路线不要求开启系统 sshd 或新建系统账户。平台与权限边界分别见[兼容性说明](compatibility.md)和[安全策略](../SECURITY.md)。
+
+[Magic Wormhole][wormhole] 用 PAKE 建立短码配对，适合临时文件交接，但引入另一套配对与中继基础设施。ShellPier 继续使用已有私有票据与固定主机公钥，不将短码作为新的认证路线。
 
 ## 一手资料
 
@@ -157,3 +173,8 @@ ShellPier 已有直连与 WSS 中继、邀请和撤销、TTL、SSH exec/PTY/SFTP
 [rclone-flags]: https://rclone.org/flags/
 [chisel]: https://github.com/jpillora/chisel
 [sshuttle]: https://sshuttle.readthedocs.io/en/stable/requirements.html
+
+[rclone-rcat]: https://rclone.org/commands/rclone_rcat/
+[rclone-cat]: https://rclone.org/commands/rclone_cat/
+[tmux]: https://github.com/tmux/tmux/wiki/Getting-Started#attaching-and-detaching
+[wormhole]: https://magic-wormhole.readthedocs.io/en/latest/welcome.html

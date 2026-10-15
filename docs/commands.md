@@ -44,7 +44,7 @@ shellpier upload @access.json ./local.txt remote.txt
 | `completion bash` | 输出补全脚本，支持 Bash/Zsh/Fish/PowerShell 7+ |
 | `version --json` | 查看版本及 OS/架构/Go/VCS 构建信息 |
 
-`proxy @access.json` 是生成的 OpenSSH `ProxyCommand` 使用的传输入口，stdin/stdout 是协议字节，不适合直接在终端观察。
+`proxy @access.json` 是生成的 OpenSSH `ProxyCommand` 使用的传输入口。加 `--to HOST:PORT` 可经目标端连接指定 TCP 服务，类似 OpenSSH `ssh -W`；不加 `--to` 时保持原有 SSH 传输入口行为。两种形式的 stdin/stdout 都是原始协议字节，不输出 JSON，不适合直接在终端观察。
 
 ## 目标端：share / host
 
@@ -228,6 +228,19 @@ shellpier upload target:lab ./build remote-build --recursive --skip-existing --p
 
 普通传输不要求手工校验摘要；续传所需的内容绑定由程序内部处理。续传只复用匹配本次传输身份的部分文件，不覆盖已完成目标；它不是任意远端文件的追加入口。网络中断后显式再次运行同一续传命令，不自动重放写入。
 
+## 用管道传输文件
+
+```sh
+# macOS/Linux：把生成结果直接上传为新文件
+printf 'hello\n' | shellpier upload @access.json - hello.txt
+# 下载的 stdout 只有原始文件字节
+shellpier download @access.json hello.txt - > received.txt
+```
+
+上传的本地路径或下载的本地目标写 `-`，分别读取 stdin 或写入 stdout；无需先在控制端创建中间文件。上传仍拒绝覆盖远端已有文件，失败可能留下部分远端文件。下载到 stdout 只接受普通文件，不跟随符号链接；管道的接收程序自行处理已收到的部分数据。
+
+流传输支持期限、`--bwlimit` 与写往 stderr 的 `--progress jsonl`，不能与 `--recursive`、`--resume`、`--resume-state`、`--preserve-times`、`--dry-run` 或 `--skip-existing` 合用。上传可用 `--json` 输出最终摘要；下载到 `-` 不接受 `--json`，也不输出传输摘要，stdout 只有原始文件字节。SSH 保护传输，普通流复制不额外计算 SHA。PowerShell 的文本管道在不同版本可能改变编码；二进制流请使用保持原始字节的调用方式，例如 CMD 的文件重定向，或直接下载到文件。
+
 ## 目标端长任务：jobs
 
 完整模式默认支持 jobs，普通 `share --output access.json` 或 `host @host.ticket` 即可；需要关闭时设置 `--allow-jobs=false`。
@@ -246,16 +259,22 @@ shellpier jobs cancel target:lab JOB_ID --json
 
 SSH 断开后任务继续，目标 host 停止或到期会取消任务；进程重启不恢复任务。提交响应丢失时，用 `jobs operation` 按原 operation ID 只读查询，取得 job ID 后读取状态和日志。同一 host 内保留完成记录，满表拒绝新增；相同 ID、相同内容的 start 返回原任务，不同内容拒绝。此去重不跨 host 重启，也不回滚 shell 副作用。
 
-## TCP 转发与反向转发
+## TCP 转发、反向转发与 SOCKS5
 
 ```sh
 # 本地端口连接到目标端的服务
 shellpier forward @access.json --to 127.0.0.1:8080 --listen 127.0.0.1:0 --json
+# 控制端建立 SOCKS5 代理，连接由目标端发起
+shellpier forward @access.json --dynamic --listen 1080 --json
 # 目标端的 8080 端口连接到控制端的 3000 服务
 shellpier forward @access.json --reverse --listen 8080 --to 127.0.0.1:3000 --json
 ```
 
 完整模式默认允许 TCP 转发，无需额外开关；转发连接与反向监听都有并发上限。监听仅限 loopback，端口 `0` 自动分配；`--timeout 0` 使用票据期限，停止进程关闭转发。需要精确限制正向目标时，在 share/host 设置可重复的 `--allow-forward HOST:PORT`。
+
+`--dynamic` 支持 SOCKS5 的无认证 CONNECT，接受 IPv4、IPv6 与域名；域名交给目标端解析。客户端应选择远端解析的 SOCKS5 模式，例如 `curl --socks5-hostname 127.0.0.1:1080 https://example.com/`。不支持 SOCKS4、BIND 或 UDP；不能与 `--to`、`--reverse` 合用。它仍受目标端 full 模式、可选目的地址限制与并发容量约束。代理仅监听 loopback，但本机其他进程也可能连接，因此不要把它当成隔离的专用网络。
+
+`proxy @access.json --to 127.0.0.1:8080` 提供单条 stdin/stdout TCP 字节桥，无需开本地监听端口；目的地址从目标端访问，与正向转发使用相同限制。它可用于自定义 `ProxyCommand`，但不自动登录下一跳，也不生成多跳票据。stdin 或远端先结束一个方向时，另一个方向可继续传输；两边结束后还会在有限时间内确认 SSH 连接仍有响应，失联或确认超时按失败返回，不重放字节。这仅确认传输状态，不证明目标服务已经提交业务操作。`--timeout 0` 使用票据期限，建连重试与保活参数只在带 `--to` 时可设置。
 
 原生 OpenSSH 可使用 `-L`、`-D` 和标准 `-R`，例如 `ssh -F ./ssh-session/ssh_config -N -R 8080:127.0.0.1:3000 shellpier`。本地 Unix socket 入口也可使用 `-L /tmp/new-private-dir/service.sock:127.0.0.1:8080`；远端 Unix socket 监听未实现。
 
@@ -278,7 +297,7 @@ shellpier terminal wait --state ./terminal-session/state.json --wait 30s --json
 shellpier mcp serve --timeout 1m --max-concurrent 4 --max-output 262144
 ```
 
-通过 stdin/stdout 承载 MCP 协议，支持 `2026-07-28` 与 `2025-11-25`；不要向协议 stdout 混入普通日志。工具按有界命令契约执行，远端操作必须使用显式 `@FILE` 或 `target:NAME`，不传内联凭据。2026 模式无状态、每个请求携带协议元数据；2025 模式执行初始化握手。`jobs start` 工具必须提供稳定 `operation-id`。单次工具默认最多 1 分钟（最大 5 分钟）、默认 4 个并发（1..16）、输出默认 256 KiB（1 KiB..1 MiB）。取消调用不回滚已经产生的副作用。
+通过 stdin/stdout 承载 MCP 协议，支持 `2026-07-28` 与 `2025-11-25`；不要向协议 stdout 混入普通日志。MCP 的上传/下载只接受普通本地路径，明确拒绝本地 `-`，以免读取或污染 JSON-RPC 协议流。工具按有界命令契约执行，远端操作必须使用显式 `@FILE` 或 `target:NAME`，不传内联凭据。2026 模式无状态、每个请求携带协议元数据；2025 模式执行初始化握手。`jobs start` 工具必须提供稳定 `operation-id`。单次工具默认最多 1 分钟（最大 5 分钟）、默认 4 个并发（1..16）、输出默认 256 KiB（1 KiB..1 MiB）。取消调用不回滚已经产生的副作用。
 
 
 ## 用户级服务：service

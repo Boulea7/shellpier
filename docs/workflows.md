@@ -194,3 +194,18 @@ SSH 默认每 15 秒探测存活，单次探测最多等 45 秒，单候选建�
 ```
 
 目标端访问自己的 `127.0.0.1:8080`，连接会到达控制端的 `127.0.0.1:3000`。保持 forward 进程运行，结束时停止即可；默认完整模式不需要再配置允许开关。
+
+## 通过目标端访问多个服务
+
+目标端普通 share 已支持转发。控制端保持以下进程运行，再让支持 SOCKS5 的程序使用它：
+
+```sh
+./shellpier forward @access.json --dynamic --listen 1080
+curl --socks5-hostname 127.0.0.1:1080 https://example.com/
+```
+
+连接和域名解析发生在目标端，停止 forward 即关闭代理。仅支持 SOCKS5 CONNECT 的 TCP 流量，不接管系统路由、DNS 或 UDP。只需一个固定服务时继续用 `--to HOST:PORT` 的普通转发。
+
+## 生成文件后直接上传
+
+macOS/Linux 可用 `printf 'hello\n' | ./shellpier upload @access.json - hello.txt`，把 stdout 直接保存为远端新文件。下载用 `./shellpier download @access.json hello.txt - > received.txt`，stdout 保持原始文件内容；需要保留时间、预演或续传时使用普通文件路径。失败后的部分数据边界见[流传输说明](commands.md#用管道传输文件)。
