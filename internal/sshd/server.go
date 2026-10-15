@@ -27,6 +27,7 @@ type Server struct {
 	Shell            string
 	WorkDir          string
 	HandshakeTimeout time.Duration
+	Forward          *ForwardPolicy
 }
 
 func (s *Server) ServeConn(ctx context.Context, conn net.Conn) error {
@@ -75,14 +76,23 @@ func (s *Server) ServeConn(ctx context.Context, conn net.Conn) error {
 	var wg sync.WaitGroup
 	sem := make(chan struct{}, MaxSessions)
 	for nc := range chans {
-		if nc.ChannelType() != "session" {
-			nc.Reject(ssh.UnknownChannelType, "only command and SFTP sessions are supported")
+		if nc.ChannelType() != "session" && nc.ChannelType() != "direct-tcpip" {
+			nc.Reject(ssh.UnknownChannelType, "unsupported SSH channel")
 			continue
 		}
 		select {
 		case sem <- struct{}{}:
 		default:
 			nc.Reject(ssh.ResourceShortage, "session limit reached")
+			continue
+		}
+		if nc.ChannelType() == "direct-tcpip" {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				defer func() { <-sem }()
+				_ = s.Forward.Serve(ctx, nc)
+			}()
 			continue
 		}
 		ch, requests, err := nc.Accept()

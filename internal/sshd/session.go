@@ -35,6 +35,7 @@ type capabilities struct {
 	CWD        bool     `json:"cwd"`
 	ExecSignal bool     `json:"exec_signal"`
 	PTYSignals []string `json:"pty_signals"`
+	Forward    bool     `json:"forward"`
 }
 
 func (s *Server) globalRequests(requests <-chan *ssh.Request) {
@@ -47,7 +48,8 @@ func (s *Server) globalRequests(requests <-chan *ssh.Request) {
 		if shell == "" {
 			shell = "auto"
 		}
-		payload, _ := json.Marshal(capabilities{Protocol: 1, OS: runtime.GOOS, Arch: runtime.GOARCH, Shell: shell, PTY: platform.TerminalSupported(), SFTP: true, Exec: true, Env: true, CWD: true, PTYSignals: platform.TerminalSignals()})
+		result := capabilities{Protocol: 1, OS: runtime.GOOS, Arch: runtime.GOARCH, Shell: shell, PTY: platform.TerminalSupported(), SFTP: true, Exec: true, Env: true, CWD: true, PTYSignals: platform.TerminalSignals(), Forward: s.Forward != nil}
+		payload, _ := json.Marshal(result)
 		request.Reply(true, payload)
 	}
 }
