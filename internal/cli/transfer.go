@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"flag"
 	"fmt"
 	"io"
 	"os"
@@ -34,8 +35,8 @@ func transferWithInputAndProgress(parent context.Context, command string, args [
 	timeout := f.Duration("timeout", 5*time.Minute, "maximum transfer duration")
 	asJSON := f.Bool("json", false, "emit transfer summary as JSON")
 	recursive := f.Bool("recursive", false, "transfer a directory tree; reject symlinks and existing destinations")
-	maxFiles := f.Int("max-files", 10000, "maximum files in a recursive transfer (1..100000)")
-	maxDepth := f.Int("max-depth", 32, "maximum recursive nesting (0..128)")
+	maxFiles := f.Int("max-files", 10000, "maximum recursive or selected files (1..100000)")
+	maxDepth := f.Int("max-depth", 32, "maximum recursive or selected path nesting (0..128)")
 	resume := f.Bool("resume", false, "resume one file using an owned partial and private journal")
 	resumeState := f.String("resume-state", "", "private local resume manifest; default uses the user cache")
 	progressMode := f.String("progress", "", "jsonl emits progress events on stderr")
@@ -43,6 +44,8 @@ func transferWithInputAndProgress(parent context.Context, command string, args [
 	preserveTimes := f.Bool("preserve-times", false, "preserve new file/directory mtime at second precision; not ownership or permissions")
 	skipExisting := f.Bool("skip-existing", false, "allow existing directories and skip existing regular files without comparing content")
 	bwlimit := f.Int64("bwlimit", 0, "operation-wide bytes/sec; 0 unlimited; includes hash and resume reads, excludes metadata")
+	filesFrom := f.String("files-from", "", "read selected relative regular-file paths from a local file; - reads stdin")
+	from0 := f.Bool("from0", false, "split files-from records on NUL instead of LF/CRLF")
 	var exclude transferExclusions
 	f.Var(&exclude, "exclude", "exclude a relative slash glob or basename; repeatable, no **")
 	if err := parseFlags(f, args); err != nil {
@@ -55,6 +58,21 @@ func transferWithInputAndProgress(parent context.Context, command string, args [
 	streamUpload := command == "upload" && positional[1] == "-"
 	streamDownload := command == "download" && positional[2] == "-"
 	streaming := streamUpload || streamDownload
+	listMode := *filesFrom != ""
+	f.Visit(func(flag *flag.Flag) {
+		if flag.Name == "files-from" {
+			listMode = true
+		}
+	})
+	if listMode && *filesFrom == "" {
+		return &UsageError{Err: errors.New("files-from requires a nonempty filename or -")}
+	}
+	if *from0 && !listMode {
+		return &UsageError{Err: errors.New("from0 requires files-from")}
+	}
+	if listMode && (streaming || *recursive || *resume || *resumeState != "" || len(exclude) != 0) {
+		return &UsageError{Err: errors.New("files-from cannot use payload streams, recursive, exclude, or resume")}
+	}
 	if streaming && (*recursive || *resume || *resumeState != "" || *preserveTimes || *dryRun || *skipExisting) {
 		return &UsageError{Err: errors.New("stream transfers cannot use recursive, resume, preserve-times, dry-run, or skip-existing")}
 	}
@@ -82,6 +100,16 @@ func transferWithInputAndProgress(parent context.Context, command string, args [
 		return err
 	}
 	parent = retry.Context(parent)
+	ctx, cancel := context.WithTimeout(parent, *timeout)
+	defer cancel()
+	var selected []string
+	if listMode {
+		var listErr error
+		selected, listErr = readTransferList(ctx, *filesFrom, stdin, *from0, *maxFiles, *maxDepth)
+		if listErr != nil {
+			return listErr
+		}
+	}
 	ticket, err := access.Read(positional[0])
 	if err != nil {
 		return err
@@ -89,8 +117,6 @@ func transferWithInputAndProgress(parent context.Context, command string, args [
 	if err = ticket.Validate("access"); err != nil {
 		return err
 	}
-	ctx, cancel := context.WithTimeout(parent, *timeout)
-	defer cancel()
 	options := transferOptions{dryRun: *dryRun, preserveTimes: *preserveTimes, skipExisting: *skipExisting}
 	if *bwlimit > 0 {
 		options.budget = &transferBudget{rate: *bwlimit}
@@ -133,6 +159,8 @@ func transferWithInputAndProgress(parent context.Context, command string, args [
 	}
 	result := transferSummary{Command: command, Warnings: []string{}}
 	switch {
+	case listMode:
+		result, err = runTransferList(ctx, src, dst, positional[1], positional[2], selected, progress)
 	case streamUpload:
 		result.Bytes, err = uploadStream(ctx, sf, stdin, positional[2], progress)
 		result.Files = 1

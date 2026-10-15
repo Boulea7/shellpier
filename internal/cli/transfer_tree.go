@@ -113,6 +113,11 @@ func runTransferTree(ctx context.Context, src, dst transferFS, source, destinati
 	if e != nil {
 		return result, e
 	}
+	return runTransferPlan(ctx, src, dst, source, destination, plan, false, progress)
+}
+
+func runTransferPlan(ctx context.Context, src, dst transferFS, source, destination string, plan []transferTreeEntry, selected bool, progress func(int64) error) (result transferSummary, err error) {
+	var e error
 	options := transferSettings(ctx)
 	if e = transferParentDirectory(dst, destination); e != nil {
 		return result, e
@@ -121,6 +126,11 @@ func runTransferTree(ctx context.Context, src, dst transferFS, source, destinati
 	// paths because a preview is not a filesystem lock or a snapshot.
 	for i := range plan {
 		item := &plan[i]
+		if selected {
+			if e = checkTransferListPaths(src, dst, source, destination, item.relative); e != nil {
+				return result, e
+			}
+		}
 		from, to := src.join(source, item.relative), dst.join(destination, item.relative)
 		current, e := src.lstat(from)
 		if e != nil {
@@ -140,7 +150,7 @@ func runTransferTree(ctx context.Context, src, dst transferFS, source, destinati
 		if item.directory {
 			item.action = "mkdir"
 			if e == nil {
-				if !options.skipExisting || !existing.IsDir() || existing.Mode()&os.ModeSymlink != 0 {
+				if (!options.skipExisting && !selected) || !existing.IsDir() || existing.Mode()&os.ModeSymlink != 0 {
 					return result, errors.New("destination already exists or is not a real directory")
 				}
 				item.action = "existing"
@@ -185,8 +195,22 @@ func runTransferTree(ctx context.Context, src, dst transferFS, source, destinati
 		if e = ctx.Err(); e != nil {
 			return result, e
 		}
+		if selected {
+			if e = checkTransferListPaths(src, dst, source, destination, item.relative); e != nil {
+				return result, e
+			}
+		}
 		from, to := src.join(source, item.relative), dst.join(destination, item.relative)
 		if item.directory {
+			if selected {
+				current, err := src.lstat(from)
+				if err != nil {
+					return result, err
+				}
+				if !current.IsDir() || current.Mode()&os.ModeSymlink != 0 {
+					return result, errors.New("source directory changed after planning")
+				}
+			}
 			if item.action == "mkdir" {
 				if e = dst.mkdir(to); e != nil {
 					return result, e
