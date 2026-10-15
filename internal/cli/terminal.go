@@ -75,10 +75,12 @@ func terminalDimensions(cols, rows int) error {
 }
 func terminal(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 	if len(args) == 0 || args[0] == "--help" || args[0] == "-h" || args[0] == "help" {
-		_, err := io.WriteString(stdout, "terminal open TICKET --out NEW-PRIVATE-DIR [--command SHELL] [--timeout 3h]\nterminal read|write|resize|signal|status|close|wait|operation --state FILE\nread returns base64 bytes with absolute cursors; closed output remains in a bounded private snapshot.\n")
+		_, err := io.WriteString(stdout, "terminal open TICKET --out NEW-PRIVATE-DIR [--command SHELL] [--timeout 3h]\nterminal read|write|resize|signal|status|close|wait|operation --state FILE\nterminal tail --state FILE [--cursor N] [--follow] [--timeout 30m]\nread returns base64 bytes with absolute cursors; closed output remains in a bounded private snapshot.\n")
 		return err
 	}
 	switch args[0] {
+	case "tail":
+		return terminalTail(ctx, args[1:], stdout, stderr)
 	case "open":
 		return terminalOpen(ctx, args[1:], stdout, stderr)
 	case "wait":
@@ -431,6 +433,12 @@ func terminalRemoveStartup(dir string, created os.FileInfo, known map[string]os.
 	os.Remove(dir) // Unrelated files prevent directory removal.
 }
 func terminalControl(ctx context.Context, mode string, args []string, stdin io.Reader, stdout, stderr io.Writer) error {
+	return terminalControlWithIdentity(ctx, mode, args, stdin, stdout, stderr, nil)
+}
+
+// terminalControlWithIdentity pins the state actually used by each read, before
+// its credentials or snapshot can be consumed. A nil identity preserves one-shot calls.
+func terminalControlWithIdentity(ctx context.Context, mode string, args []string, stdin io.Reader, stdout, stderr io.Writer, identity *terminalState) error {
 	f := flags("terminal "+mode, stderr)
 	statePath := f.String("state", "", "private terminal state file")
 	machine := f.Bool("json", false, "emit metadata as JSON")
@@ -474,6 +482,13 @@ func terminalControl(ctx context.Context, mode string, args []string, stdin io.R
 	state, err := terminalReadState(path, false)
 	if err != nil {
 		return err
+	}
+	if identity != nil {
+		if identity.ID == "" {
+			*identity = state
+		} else if identity.ID != state.ID || identity.Secret != state.Secret || identity.ControlURL != state.ControlURL {
+			return errors.New("terminal session identity changed while reading output")
+		}
 	}
 	if operationID != "" && !terminalOperationID(operationID) {
 		return errors.New("invalid operation ID")
