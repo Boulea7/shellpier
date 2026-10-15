@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.4.0-alpha.1 — 2026-10-15
+
+- 新增连接建立超时与 SSH 应用层保活，可发现直连和中继内的无响应连接；配置可随持久 terminal 保存，断线不自动重放远端操作。
+- 新增服务端 `full`、`sftp`、`sftp-readonly` 访问模式，覆盖 share、host 和用户级服务；受限模式拒绝命令、PTY、jobs 与转发，只读模式限制 SFTP 写入路径。
+- 新增传输 `--dry-run`、`--verify`、`--preserve-times`、`--skip-identical` 和 `--bwlimit`，提供只读计划、独立内容校验、秒级 mtime 保留、相同文件跳过与共享限速，继续拒绝覆盖不同内容。
+- OpenSSH 配置支持可调保活与可选 Unix ControlPersist，每张票据使用私有连接复用 socket；保持主机公钥固定及票据到期约束。
+- check、doctor 与 capabilities 识别受限访问模式，区分 SSH 认证成功与远端账户身份检查；同步 schema、补全、MCP 参数和 Agent skill。
+- 扩充 OpenSSH、rsync、rclone、croc、Mosh、autossh、tmate、Tailscale SSH 与 Teleport 的官方资料对比，记录已吸收能力和实现边界。
+
 ## v0.3.0-alpha.1 — 2026-10-15
 
 - 新增 host 托管的 `jobs`：SSH 断线后继续、有界任务与日志、operation ID 去重、查询、等待和取消。

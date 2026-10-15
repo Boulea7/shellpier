@@ -163,3 +163,25 @@ Windows 7/8 请使用[独立 Legacy 指南](legacy-windows.md)，支持范围见
 需要以后登录自动启动时，仅在安装命令加 `--autostart`；安装本身不立即启动。也可先把 host 票据登记为 target，再传 `--ticket target:NAME`。服务不续期票据，有限授权到期后仍停止；更新成不同会话 ID 的票据需卸载后重新安装，避免服务悄悄指向另一目标。
 
 MCP 客户端可启动 `shellpier mcp serve` 接入同一组有界工具。2026 模式逐请求携带元数据，2025 模式先初始化；远端操作显式指定票据引用。提交 jobs 时固定 operation ID，遇到 unknown 先查询原提交，输出截断或取消均不能证明操作没有副作用。
+
+
+## 只分享文件与先看传输计划
+
+只需提供文件读取时，目标端可直接限制入口：
+
+```sh
+./shellpier share --access-mode sftp-readonly --output access.json
+```
+
+控制端仍可下载、列目录和校验文件；不能执行命令、打开 shell 或启动任务。只读模式限制操作类型，不限制可读路径，`--work-dir` 也不是沙箱。需要文件上传但不提供命令执行时选择 `--access-mode sftp`。
+
+对已有目标目录，先只读预检，再明确执行：
+
+```sh
+./shellpier upload target:lab ./build remote-build --recursive --skip-identical --dry-run --json
+./shellpier upload target:lab ./build remote-build --recursive --skip-identical --verify --preserve-times --bwlimit 1048576 --json
+```
+
+相同文件跳过，不同文件报错，不覆盖；预检本身不锁定后续目录内容。`--verify` 会增加源与目标读取，和复制共享带宽预算。`--preserve-times` 只保留秒级 mtime，不复制权限、所有权或原 atime。单文件 `--resume` 不与 dry-run 或 skip-identical 合用。
+
+SSH 默认每 15 秒探测存活，单次探测最多等 45 秒，单候选建连默认 10 秒。可按网络条件调整相应参数，关闭保活用 `--keepalive-interval 0`。探测失败会结束连接，不会重新执行命令；断线后先查询任务或终端结果，再决定下一步。外部 OpenSSH 连接复用与关闭步骤见[命令参考](commands.md#openssh-配置中的保活与连接复用)。

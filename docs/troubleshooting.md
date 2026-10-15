@@ -97,3 +97,22 @@
 | MCP 协议版本不匹配 | 使用支持的 2026-07-28 无状态请求或 2025-11-25 初始化流程，不混用握手 |
 | MCP 拒绝远端工具参数 | 显式传 `@FILE` 或 `target:NAME`；jobs start 还需稳定 operation ID |
 | MCP 输出截断或任务 outcome unknown | 截断不是完整结果，取消不是回滚；保留原 operation ID 查询或确认，不新建 ID 重新提交 |
+
+
+## 保活、访问模式与传输选项
+
+| 现象 | 处理 |
+|---|---|
+| 建连先于命令 timeout 结束 | `--connect-timeout` 限制单候选建连，默认 10 秒；重试次数和命令总期限另算 |
+| SSH 保活超时后连接关闭 | 核对网络与 `--keepalive-interval/--keepalive-timeout`；结果可能未知，先查询副作用，不自动重跑 |
+| 服务端不支持保活请求 | SSH 请求返回 false 也算存活，不应因此关闭连接；不要将应用错误当作网络超时 |
+| check 成功但 identity_verified=false，或 doctor 身份阶段不可用 | 受限模式只完成 SSH 认证与能力广告，不运行身份命令；这不等于实际探测 SFTP，也不是整体连接失败 |
+| SFTP 能用而 exec/shell/jobs/forward 被拒绝 | 查看 `capabilities` 的 `access_mode`；目标选择非 full 模式时这是策略限制 |
+| sftp-readonly 仍能读取起始目录外文件 | 只读限制写入，不提供文件路径沙箱；读取范围仍由当前账户权限决定 |
+| skip-identical 遇到已有文件报错 | 只有 SHA256 相同才跳过；内容不同仍拒绝覆盖，先核对目标与源 |
+| verify 明显增加耗时 | 它读取源前后与目标内容；哈希和复制共享 `--bwlimit` 预算，进度速度不等于纯网络吞吐 |
+| dry-run/resume 参数冲突 | dry-run 不建立续传状态；单文件 resume 不能与 dry-run 或 skip-identical 合用 |
+| 传输后时间或权限不同 | preserve-times 仅新建文件/目录的秒级 mtime，不保留原 atime、权限或所有权 |
+| 使用 control-persist 后准备清理 | 先用原配置 `ssh -F PATH/ssh_config -O exit shellpier` 显式关闭后再清理；cleanup 不撤销、不杀不确定 master |
+
+保活、传输计划和连接复用不延长票据期限。保持原 operation ID 查询不确定的提交结果，不因连接关闭自动生成新的写入请求。

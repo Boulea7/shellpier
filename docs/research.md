@@ -1,32 +1,140 @@
-# 连接路线与工程约束
+# 工具选型与工程取舍
 
-[返回文档目录](README.md) · [Legacy 指南](legacy-windows.md)
+[返回文档目录](README.md) · [路线图](roadmap.md) · [Legacy 指南](legacy-windows.md)
 
-本页说明连接方案的条件与实现选择。替代产品不随 ShellPier 打包或自动安装。
+调研日期：2026-10-15。本文以 `v0.3.0-alpha.1` 为对比基线，记录 `v0.4.0-alpha.1` 新增的能力与取舍。外部工具的能力以所链接的一手文档为依据，不随 ShellPier 打包或自动安装。
 
-## 现成工具能解决什么
+ShellPier 面向当前用户临时开放的 CLI 与 AI 远程操作：建立可到期、固定主机公钥的访问，再执行命令或传文件。已经有系统 SSH、组织网络或文件同步设施时，复用它们往往更简单。
 
-| 工具与一手资料 | 合适的已有条件 | 对本项目需求的限制 |
+## 按任务选择工具
+
+| 工具 | 适合解决的问题 | 与 ShellPier 的关系和限制 |
 |---|---|---|
-| [OpenSSH](https://www.openssh.com/manual.html)、[Windows 官方组件](https://learn.microsoft.com/en-us/windows-server/administration/openssh/openssh-overview) | 已有 sshd 和可达路径，或获准的 reverse forward | Windows 可选组件从 Win10 1809/Server 2019 起提供；系统服务与账户配置不是便携当前用户入口；reverse SSH 本身不提供 HTTPS |
-| [Chisel](https://github.com/jpillora/chisel) | 需要 HTTP 上的 TCP/UDP 隧道，可部署双方程序 | 隧道仍需后端 SSH server；需管理 endpoint、认证、指纹与 TLS 配置 |
-| [frp](https://gofrp.org/en/docs/) | 长期维护 frps/frpc、多服务暴露与运维配置 | 模式、TLS 和访问控制各有配置；服务转发不自动提供目标账户的 SSH 登录 |
-| [tmate](https://github.com/tmate-io/tmate) | 已有适合其运行环境的终端，目标是共享终端会话 | 终端协作语义与独立命令/SFTP 不同；不提供本项目所需的 Win7 SSH 服务端 |
-| [Upterm](https://github.com/owenthereal/upterm) | 通过 SSH 分享终端，可用其 client/server 基础设施 | 仍须检查实际平台、终端、服务器及授权条件；需单独配置 |
-| [bore](https://github.com/ekzhang/bore) | 向中继暴露现有本地 TCP 端口 | 需要现有 SSH endpoint；隧道认证与 SSH 加密需要分别配置 |
-| [Cloudflare Tunnel SSH](https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/use-cases/ssh/ssh-cloudflared-authentication/) | 已有 Cloudflare 组织/域名、Tunnel、Access 策略和 sshd | 官方示例需目标连接器、客户端 cloudflared/SSH 配置及认证；不是无账户的通用公共 SSH relay |
-| [Tailscale SSH](https://tailscale.com/docs/features/tailscale-ssh) | 双方加入获准 tailnet，配置访问策略 | 官方 SSH server 为 Linux/macOS 开源 CLI；Windows 端需通过 Tailscale 网络连接另行配置的 SSH server |
-| [Bitvise SSH Server](https://bitvise.com/ssh-server-download) | 旧 Windows 需要真实 SSH server，允许管理员安装 | 有厂商许可、签名和服务实例配置；本项目固定 9.66，支持范围见 Legacy 指南 |
-| [PuTTY/Plink](https://www.chiark.greenend.org.uk/~sgtatham/putty/latest.html)、[Plink 手册](https://the.earth.li/~sgtatham/putty/0.85/htmldoc/Chapter7.html) | 已有可达 SSH server 或自有 reverse-forward relay | 是客户端/隧道，不提供目标 SSH server；当前指南使用 0.85 w32 |
+| OpenSSH、sftp、scp | 已有 SSH 服务与账户，交互登录、批处理传输、连接复用和跳板 | ShellPier 可生成隔离配置，复用原生客户端。`scp` 使用 SFTP 的模式与 `-O` 旧 SCP 模式不同；不能因为支持 SFTP 就承诺旧 SCP 协议兼容。[SSH 配置][ssh-config]、[sftp 手册][sftp]、[scp 手册][scp] |
+| rsync | 反复同步目录、差量传输、丰富的属性与过滤规则 | 远程 shell 路线要求两端安装 rsync。ShellPier 的目录复制和单文件续传不等于 rsync 的差量算法，也不提供镜像删除。[rsync 手册][rsync] |
+| rclone | 多种存储后端之间复制、同步和检查 | `copy` 保留目标多余文件，`sync` 可以删除它们。SFTP 后端的 hash 可能需要远端 shell 命令；只读 SFTP 不能因此被视为支持这套能力。[copy][rclone-copy]、[sync][rclone-sync]、[SFTP 后端][rclone-sftp] |
+| croc | 用短码在两台机器间传文件或目录，包含中断续传 | PAKE 与中继降低文件交接门槛；它的文件交接目标不同于持续授权远端执行。ShellPier 保留票据与主机身份，不另加短码密钥交换路线。[项目说明][croc] |
+| Mosh | 网络短暂中断、切换 IP 后继续交互终端 | 使用 SSH 引导、UDP 同步屏幕状态，可以跳过中间画面；不是恢复完整 SSH 字节流。需要 UDP 可达，不直接替代 WSS 上的命令、文件与转发。[协议与使用说明][mosh] |
+| autossh | 监测 SSH 连接并在失败后重启，常用于长期隧道 | 重启客户端不等于保存远端进程。ShellPier 可以吸收失联检测与退避；不能据此自动重放可能已有副作用的命令。[官方 README][autossh] |
+| tmate | 多人进入同一终端，分别持有可写或只读入口 | 支持共享终端及公钥访问限制。ShellPier 的持久终端是控制端 worker，不是跨机器的多人协作服务；中继 host/client 角色也不是观察者/操作者权限。[官方发布说明][tmate] |
+| Tailscale SSH | 已有 tailnet，按设备身份、用户和访问策略登录 | 集成网络与 SSH 授权，check 模式可要求重新认证；交互式认证策略需要考虑自动化。它与“通过 Tailscale 网络连接普通 OpenSSH”是两种方案。[授权与 check 模式][tailscale]、[两种 SSH 路线][tailscale-ssh] |
+| Teleport | 组织统一身份、短期证书、角色策略、会话录制与访问治理 | CA、身份提供方和策略平台有其部署与运维成本。短期证书、空闲超时和证书过期后断开是不同策略；ShellPier 的票据 TTL 不等于完整组织身份系统。[认证架构][teleport-auth]、[角色策略][teleport-roles] |
 
-这些工具仍然是有效选择。已经拥有某套组织网络或系统 SSH 服务时，复用它通常比增加服务更简单。按现有条件、授权范围和网络可达性选择。
+## 与 OpenSSH 逐项比较
 
-## 为什么现代路线内置 SSH
+能接入 OpenSSH 客户端，不代表实现了 OpenSSH 服务端的全部功能。下表区分 ShellPier 内置能力、可复用的客户端行为和当前缺口；具体算法与硬件支持还取决于用户安装的 OpenSSH 版本。
 
-目标是解压后由当前用户启动一个临时 endpoint，不要求开启系统 sshd、改系统账户或手输目标用户名。SSH 协议与加密使用 [golang.org/x/crypto/ssh](https://pkg.go.dev/golang.org/x/crypto/ssh)，SFTP 使用 [pkg/sftp](https://github.com/pkg/sftp)，WebSocket 使用 [coder/websocket](https://github.com/coder/websocket)。它们是协议库，ShellPier 负责访问票据、固定主机公钥、生命周期、角色授权和命令启动。
+| 范围 | OpenSSH 的能力 | ShellPier 当前状态与取舍 |
+|---|---|---|
+| 登录与认证 | 系统账户登录、多种认证方式、证书与硬件密钥。[ssh][ssh] | 使用票据里的单个授权公钥，在已登录的当前账户运行；没有密码/PAM 登录、CA/principal 管理、FIDO 注册或多用户切换。当前无需维护系统 sshd。 |
+| 连接管理 | 建连期限、加密保活、ControlMaster/ControlPersist。[ssh_config][ssh-config] | 本轮补齐内置建连期限和 SSH 保活，生成配置可启用 Unix 连接复用；内置每次调用仍单独建连。 |
+| 命令与终端 | exec、PTY、交互转义键及多种客户端控制。[ssh][ssh] | 支持 exec、PTY、尺寸同步，另有 Agent terminal/jobs；不解析 OpenSSH 交互转义键，信号能力以 capabilities 为准。原生 ssh 的客户端操作可以继续使用。 |
+| 文件访问策略 | `ForceCommand internal-sftp`、目录隔离及转发开关。[sshd_config][sshd-config] | 本轮提供 SFTP 专用/只读模式并同时拒绝执行和转发；没有 chroot 或目录根隔离。仅改工作目录不能替代访问边界。 |
+| 每个凭据的细粒度策略 | authorized_keys 可限制来源、强制命令、PTY 和转发。[sshd][sshd] | 每个 host 使用单个授权公钥和统一访问模式；没有逐公钥命令规则、多组权限或来源策略语言。 |
+| 网络转发 | 本地、远端、动态代理、Unix socket 和隧道设备。[ssh][ssh] | 内置 `forward` 提供本地 TCP 转发。原生 `ssh -D` 和本地 Unix socket → 远端 TCP 可复用现有服务端，均受精确 allowlist 限制；服务端未实现反向监听、远端 Unix socket、TUN 或 X11/认证 agent 转发。 |
+| 跳板与配置 | ProxyJump、Host/Match/Include 等客户端配置。[ssh_config][ssh-config] | `targets` 是票据文件别名；不解析完整 ssh_config，也没有原生多跳编排。生成配置的 ProxyCommand 与 ProxyJump 不能直接叠加。 |
+| 生命周期 | 连接保活、闲置 channel/连接超时是不同策略。[sshd_config][sshd-config] | 有授权 TTL、命令/任务总时限及本轮保活；没有单独的闲置 channel 超时。保活有响应不等于用户仍在操作。 |
 
-中继把 host/client 的 WSS 连接配对，传递 SSH 字节；创建密钥和双方角色 token 分离。中继不解密 SSH 命令与文件，但能看到连接元数据并中断可用性。容量上限、等待超时、撤销和 TTL 同时管理等待中与已配对的连接。
+认证 agent 指 `ssh-agent` 密钥代理，并非 AI Agent。它与 X11、TUN、反向转发、CA 或 chroot 都需要额外的协议、权限和运维设计；这些缺口已明确记录，但本轮不因“OpenSSH 有”就默认增加授权范围。
 
-默认前台运行，会话 TTL 为 3 小时，不添加开机启动。控制端邀请路线避免把控制私钥传到目标机；既有访问可生成固定主机公钥的 OpenSSH config。当前没有免费公共 relay；自托管需要用户明确选定可信域名、TLS 和操作方。
+本轮在 macOS 的系统 OpenSSH 上实际验证了 ControlMaster 复用与不同票据隔离、TTL 关闭 master，以及 `-D` 和本地 Unix socket 转发。后两者访问允许目标成功、访问未列入 allowlist 的目标失败。这些是原生客户端互操作验收，不代表所有 OpenSSH 版本和平台均已验证。
 
-平台范围见[兼容性说明](compatibility.md)，权限与凭据保护见[安全策略](../SECURITY.md)。
+## 基线已经提供什么
+
+`v0.3.0-alpha.1` 已有直连与 WSS 中继、邀请和撤销、TTL、SSH exec/PTY/SFTP，以及面向 Agent 的 schema、JSON 输出和 MCP stdio。中继配对双方并传递 SSH 字节，不解密命令或文件；中继运营者仍能观察连接元数据或中断连接。当前没有免费公共 relay，自托管需要自行选定域名、TLS 和运营方。
+
+已有票据可生成固定主机公钥的 OpenSSH 配置，使用原生 `ssh -F` 或 `sftp -F … -b …` 执行命令与批量传输。无需为批处理再造一套文件操作语言。WSS 配置使用 `ProxyCommand`；OpenSSH 明确规定它与 `ProxyJump` 竞争，先设置的选项会阻止另一项生效，不能简单叠加。[SSH 配置][ssh-config]、[sftp 批处理][sftp]
+
+后台 jobs 可在 SSH 连接断开后继续运行，并通过 operation ID 查询提交结果；范围限于同一个 host 进程。持久 terminal 保留控制端 worker、远端 PTY 和有界输出，可脱离当前调用继续操作；不是 host 重启后的恢复，也不保证 SSH 断线后重建原 PTY。对于结果未知的命令，应查询原 operation，而不是自动再执行一次。
+
+文件传输已有目录遍历与排除、单文件续传和内容摘要。续传受原票据、主机身份、文件与私有 journal 约束，不是可跨任意目标复用的缓存。已有本地转发仅监听 loopback，并要求目标端精确允许目的地址；不提供反向转发。
+
+## 本轮吸收的四项改进
+
+以下能力已纳入 `v0.4.0-alpha.1`；实际参数与示例见命令帮助和[命令参考](commands.md)。
+
+| 改进 | 用户价值 | 保证的边界 |
+|---|---|---|
+| SSH 连接超时与应用层保活 | 限制建立连接的等待，发现连接已经失效 | 保活只检测存活，不恢复原连接、不重放命令。WSS 心跳与 SSH 保活位于不同层。[OpenSSH 的超时与保活][ssh-config] |
+| `--access-mode full\|sftp\|sftp-readonly` | 只需要传文件时，不同时授予命令执行与转发 | 服务端拒绝 shell、jobs 和 forward；只读模式还限制特殊 OPEN 与 hardlink 等写入路径。它不限制可见目录，仍能读取当前账户有权读取的文件，不是 chroot 或操作系统沙箱。 |
+| transfer 的预览、复读校验、时间保留、跳过相同文件与限速 | 减少误传、重复传输和链路争用，让 Agent 先查看计划 | `--dry-run` 不创建目标或续传状态，但不是冻结文件系统；`--verify` 独立复读两端比较 SHA-256；`--preserve-times` 只保留秒级 mtime，不保留所有者和权限；`--skip-identical` 比较内容，相异文件拒绝覆盖；`--bwlimit` 按整次操作共享字节预算，包含摘要与续传读取，不含元数据和协议开销。 |
+| `ssh-config` 的保活与可选 `--control-persist` | 原生客户端可减少重复连接的成本 | 复用默认关闭；Unix 使用每票据私有 socket。复用已有 SSH 连接不创建持久终端，也不延长票据 TTL；不承诺 Windows 提供同等 socket 复用行为。[OpenSSH 复用配置][ssh-config] |
+
+这些选择吸收的是可单独使用的机制。没有照搬 rsync 的完整同步策略或 rclone 的存储后端体系，也没有因为 autossh 能重启 SSH 就加入远端操作重试。
+
+## 不能混淆的保证
+
+**保活、重连、漫游和持久化。** 保活发现无响应；重连建立新连接；Mosh 漫游同步终端屏幕；持久进程在连接之外保存工作。OpenSSH ControlMaster/ControlPersist 复用连接，autossh 监测和重启连接，都不能单独保证远端任务或 PTY 存活。[SSH 配置][ssh-config]、[autossh][autossh]、[Mosh][mosh]
+
+**内容一致、原子可见和落盘持久。** hash 比较回答读取到的内容是否相同；atomic rename 回答读者是否会看到中间文件；fsync 请求把数据提交到存储。三者不能互相替代，也不能把整个目录复制变成事务。OpenSSH 的 SFTP 上传落盘请求依赖服务端 `fsync@openssh.com` 扩展；ShellPier 的 `--verify` 不承诺断电持久性。源文件仍可能被其他进程修改，预览和校验也不是文件系统快照。[sftp 的落盘选项][sftp]、[rsync 的更新与同步选项][rsync]
+
+**跳过与同步。** rsync 默认 quick check 使用大小与修改时间，ShellPier 本轮 `--skip-identical` 使用内容比较、相异即报错，不自动更新相异文件。rclone 的 `sync` 会使目标趋同并可能删除目标额外内容；ShellPier 没有借用这一名称或加入隐式删除。[rsync][rsync]、[rclone sync][rclone-sync]
+
+**终端输出与审计。** ShellPier 的有界输出快照和可选本机 terminal 日志便于继续工作，不是完整操作审计。Tailscale 的会话录制记录终端输出；Teleport 将审计事件与会话录制分别处理。终端画面也不等于所有实际执行的命令，且可能包含敏感数据。[Tailscale 录制][tailscale-recording]、[Teleport 录制][teleport-recording]、[Teleport 审计事件][teleport-audit]
+
+## 暂不照搬的方向
+
+- **UDP 漫游与预测回显：** Mosh 为交互屏幕选择 UDP 和状态同步。ShellPier 需要代理可达的 WSS、完整命令结果和文件传输，本轮不增加另一套传输与状态恢复协议。[Mosh][mosh]
+- **多人共享终端：** tmate 的只读入口、Teleport 的 observer/peer/moderator 涉及参与者身份与加入权限。ShellPier 当前没有这套共享授权，不把多次读取同一 terminal 当成多人协作。[tmate][tmate]、[Teleport 会话加入][teleport-join]
+- **完整 SSO、CA 与 RBAC：** Tailscale 和 Teleport 依赖组织身份及策略基础设施。ShellPier 保持票据、公钥固定、到期和撤销；共享凭据不能归因到不同的人，不宣称人级审计。[Tailscale SSH][tailscale]、[Teleport 认证][teleport-auth]
+- **操作审计日志与集中录制：** 需要另行定义事件覆盖、保留、敏感信息处理及记录失败时的行为；本轮不实现，也不以已有输出日志替代。[Tailscale 录制][tailscale-recording]、[Teleport 审计][teleport-audit]
+- **反向转发与通用网络入口：** 当前保留明确授权的本地 loopback 转发，不扩大为任意服务暴露或组织 VPN。
+- **镜像删除、完整元数据复制和云存储后端：** 这些属于 rsync/rclone 的主要使用场景；需要时优先使用对应工具并检查服务端依赖，不以几个同名 flag 宣称兼容。
+
+以上是当前取舍，不是后续功能承诺。[路线图](roadmap.md)单独记录已实现能力与尚待验证的范围。
+
+## 其他连接路线
+
+需要长期暴露已有服务时，可考察 [Chisel](https://github.com/jpillora/chisel)、[frp](https://gofrp.org/en/docs/) 或 [Cloudflare Tunnel SSH](https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/use-cases/ssh/ssh-cloudflared-authentication/)。隧道仍需 SSH endpoint，并各有认证、TLS 和运营条件，不会自动提供目标账户登录。
+
+旧 Windows 是独立路线：系统 OpenSSH 可选组件的支持范围见 [Microsoft 文档](https://learn.microsoft.com/en-us/windows-server/administration/openssh/openssh-overview)；Bitvise 与 Plink 的固定版本、许可、签名及安装要求见 [Legacy 指南](legacy-windows.md)。现代路线不要求开启系统 sshd 或新建系统账户。平台与权限边界分别见[兼容性说明](compatibility.md)和[安全策略](../SECURITY.md)。
+
+## 一手资料
+
+以下资料按本次调研日期读取；在线手册和主分支文档会变化，不能据此推断用户已安装版本的行为。
+
+1. [OpenSSH：ssh_config][ssh-config]，连接超时、保活、代理与复用。
+2. [OpenSSH：sftp][sftp]，批处理、续传、属性与 fsync 扩展。
+3. [OpenSSH：scp][scp]，SFTP 与旧 SCP 模式。
+4. [rsync 手册][rsync]，差量、quick check、远端依赖与同步选项。
+5. [rclone copy][rclone-copy]，复制与目标保留。
+6. [rclone sync][rclone-sync]，同步与删除语义。
+7. [rclone SFTP][rclone-sftp]，远端 shell 与摘要能力。
+8. [croc 项目说明][croc]，PAKE、文件交接与续传。
+9. [Mosh 协议与使用说明][mosh]，UDP、漫游与屏幕状态同步。
+10. [autossh 官方 README][autossh]，监测、重启和退避。
+11. [tmate 官方发布说明][tmate]，只读/可写会话与公钥限制。
+12. [Tailscale SSH][tailscale]，身份、策略与 check 模式。
+13. [SSH over Tailscale][tailscale-ssh]，普通 SSH 与 Tailscale SSH 的区别。
+14. [Tailscale SSH 会话录制][tailscale-recording]，输出、敏感信息与录制失败策略。
+15. [Teleport 认证架构][teleport-auth]，CA、身份与短期证书。
+16. [Teleport 角色策略][teleport-roles]，会话 TTL、过期处理与权限。
+17. [Teleport 会话录制架构][teleport-recording]，录制位置与信任边界。
+18. [Teleport 审计事件][teleport-audit]，事件与录制数据。
+19. [Teleport 会话加入][teleport-join]，参与角色与授权。
+20. [OpenSSH：ssh][ssh]，登录认证、交互控制和转发类型。
+21. [OpenSSH：sshd_config][sshd-config]，服务端权限、目录隔离和闲置期限。
+22. [OpenSSH：sshd][sshd]，authorized_keys 的逐密钥限制。
+
+[ssh-config]: https://man.openbsd.org/ssh_config
+[ssh]: https://man.openbsd.org/ssh.1
+[sshd-config]: https://man.openbsd.org/sshd_config.5
+[sshd]: https://man.openbsd.org/sshd.8
+[sftp]: https://man.openbsd.org/sftp
+[scp]: https://man.openbsd.org/scp
+[rsync]: https://download.samba.org/pub/rsync/rsync.1
+[rclone-copy]: https://rclone.org/commands/rclone_copy/
+[rclone-sync]: https://rclone.org/commands/rclone_sync/
+[rclone-sftp]: https://rclone.org/sftp/
+[croc]: https://github.com/schollz/croc
+[mosh]: https://mosh.org/
+[autossh]: https://www.harding.motd.ca/autossh/README.txt
+[tmate]: https://github.com/tmate-io/tmate/releases
+[tailscale]: https://tailscale.com/kb/1193/tailscale-ssh
+[tailscale-ssh]: https://tailscale.com/docs/reference/ssh-over-tailscale
+[tailscale-recording]: https://tailscale.com/kb/1246/tailscale-ssh-session-recording/
+[teleport-auth]: https://goteleport.com/docs/reference/architecture/authentication/
+[teleport-roles]: https://goteleport.com/docs/reference/access-controls/roles/
+[teleport-recording]: https://goteleport.com/docs/reference/architecture/session-recording/
+[teleport-audit]: https://goteleport.com/docs/reference/deployment/monitoring/audit/
+[teleport-join]: https://goteleport.com/docs/zero-trust-access/access-controls/guides/joining-sessions/

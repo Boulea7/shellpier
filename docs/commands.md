@@ -27,7 +27,7 @@ PowerShell 的票据参数必须加引号，例如 `'@access.json'`。`@file` �
 | `cleanup --dir invitation` | 删除生成目录中清单所属的凭据文件 |
 | `relay --token-file relay.key` | 运行自托管中继 |
 | `inspect @access.json --json` | 本地校验票据，输出不含凭据的摘要 |
-| `check @access.json --json` | 实际建立 SSH，检查目标身份与可执行性 |
+| `check @access.json --json` | 实际建立 SSH；完整模式同时检查目标账户身份 |
 | `upload @access.json local.txt remote.txt` | 上传文件或显式递归目录，拒绝覆盖 |
 | `download @access.json remote.txt local.txt` | 下载文件或显式递归目录，拒绝覆盖 |
 | `keygen --out legacy-keys --json` | 新建 Ed25519 SSH 密钥对，无需系统 ssh-keygen |
@@ -52,6 +52,7 @@ PowerShell 的票据参数必须加引号，例如 `'@access.json'`。`@file` �
 | `--shell auto` | 可选 `auto`、`powershell`、`cmd`、`sh` |
 | `--work-dir PATH` | 设置命令起始目录，不构成文件系统沙箱 |
 | `--keep-awake` | 自愿启用系统防睡眠机制，保持前台进程 |
+| `--access-mode full` | 默认完整功能；`sftp` 仅文件操作，`sftp-readonly` 仅只读文件操作 |
 | `--reconnect-min 1s` / `--reconnect-max 30s` | share/host 的中继重连等待范围 |
 
 `host` 从票据继承中继和有效期，支持 `--json`、`--shell`、`--work-dir`、`--keep-awake` 和上述重连参数。例如：
@@ -59,6 +60,8 @@ PowerShell 的票据参数必须加引号，例如 `'@access.json'`。`@file` �
 ```sh
 shellpier host @host.ticket --shell sh --work-dir /home/you/work
 ```
+
+`share`、`host` 与 `service plan/install` 都支持 `--access-mode full|sftp|sftp-readonly`。非 `full` 模式拒绝 exec、shell、PTY、jobs 和端口转发，也不能与 `--allow-jobs` 或 `--allow-forward` 合用。`sftp-readonly` 禁止 SFTP 写入，但仍可读取当前账户有权访问的路径；`--work-dir` 是起始目录，不是文件系统沙箱。通过 `capabilities` 的 `access_mode` 与 `sftp_read_only` 查看目标策略。
 
 `share` 不指定 `--output` 时会把完整访问票据写到 stdout，包括 JSON 输出；不要把它接入公共日志。`host --json` 不输出控制端私钥，但状态文件本身仍须私下保管。
 
@@ -79,6 +82,29 @@ sftp -F ./ssh-session/ssh_config shellpier
 
 `connect`、`exec`、`check`、`upload`、`download`、`files` 等建连命令支持 `--retries 2`（默认最多 3 次建连，`0` 关闭重试），以及 `--retry-min 200ms` / `--retry-max 3s`（等待上限不得超过 1 分钟）。这些参数只控制 SSH 建连前的暂时网络错误；命令执行或传输开始后不自动重放。中继断线重连机制见[工作流](workflows.md#长期运行与断线)。
 
+### 建连期限与 SSH 保活
+
+采用通用建连参数的命令还支持以下选项，包括 `terminal open`；终端 worker 会保存这些设置。
+
+| 参数 | 默认与含义 |
+|---|---|
+| `--connect-timeout 10s` | 每个候选连接的建立期限，正数且最多 5 分钟；不是命令执行期限 |
+| `--keepalive-interval 15s` | SSH 探测间隔，`0` 关闭，最大 1 小时 |
+| `--keepalive-timeout 45s` | 单次已发送探测的响应期限；启用探测时须为正数且最多 1 小时 |
+
+目标对探测答复 `false` 仍表示连接存活；只有未答复或连接错误才关闭传输。保活超时后远端结果可能未知，不自动重新执行命令、发送终端输入或重启传输。
+
+### OpenSSH 配置中的保活与连接复用
+
+```sh
+shellpier ssh-config @access.json --out ./ssh-session --server-alive-interval 15s --server-alive-count-max 3 --control-persist 1m
+ssh -F ./ssh-session/ssh_config shellpier hostname
+ssh -F ./ssh-session/ssh_config -O exit shellpier
+shellpier cleanup --dir ./ssh-session
+```
+
+`ssh-config` 默认写入 `ServerAliveInterval 15`、`ServerAliveCountMax 3`；间隔用整秒 duration，`0` 关闭。`--control-persist` 默认 `0` 关闭，仅 Unix 可显式设置 1 秒至 1 小时的整秒 duration，socket 位于该票据的私有目录。复用依赖控制端 OpenSSH，不是内置客户端的重连功能。先用对应配置 `-O exit` 关闭 master，再 cleanup；cleanup 不撤销访问，也不会终止身份不确定的 master。
+
 ## 按需诊断、文件传输与密钥
 
 ```sh
@@ -89,7 +115,7 @@ shellpier download @access.json remote.txt ./received.txt --timeout 5m --json
 shellpier keygen --out ./legacy-keys --json
 ```
 
-这些检查按需使用。`inspect` 仅检查本地票据，不连接目标；`check` 会建立 SSH 并运行身份检查。`check` 默认超时 20 秒，接受 1 秒至 5 分钟。传输默认超时 5 分钟，支持 `--interface NAME` 与 `--json`，默认传单个普通文件，不覆盖目标；目录与续传参数见下表。上传失败可能留下远端部分文件，先核对再处理；下载失败只清理本次创建的本地部分文件。Windows 远端绝对路径写 `/C:/Users/you/file.txt`。
+这些检查按需使用。`inspect` 仅检查本地票据，不连接目标；`check` 会建立 SSH；完整模式运行身份检查，受限模式不执行 hostname/whoami，JSON 通过 `identity_verified` 与 `access_mode` 区分。受限模式的 `ok=true` 表示 SSH 已认证，不表示执行身份命令或实际探测 SFTP。`check` 默认超时 20 秒，接受 1 秒至 5 分钟。传输默认超时 5 分钟，支持 `--interface NAME` 与 `--json`，默认传单个普通文件，不覆盖目标；目录与续传参数见下表。上传失败可能留下远端部分文件，先核对再处理；下载失败只清理本次创建的本地部分文件。Windows 远端绝对路径写 `/C:/Users/you/file.txt`。
 
 `keygen` 的父目录须存在，输出目录须不存在。它生成私有 `identity` 与 `identity.pub`，stdout 只输出路径和 SHA256 指纹；Legacy 配置使用公钥，私钥留在控制端。未提供 RSA 或密码加密选项。
 
@@ -164,7 +190,7 @@ shellpier exec target:lab --command whoami --json
 shellpier targets remove lab --json
 ```
 
-`targets` 保存私有 access 或 host 票据文件的引用，不复制票据；使用命令仍会校验所需角色。移除名称不删除凭据，也不撤销访问。默认配置目录可通过 `SHELLPIER_CONFIG_DIR` 或 `--config-dir` 指定。远端命令接受 `target:NAME`；引用失效时更新票据与名称。`doctor --target` 按阶段报告票据、网络/SSH 与能力检查，支持 `--interface`、`--retries`、`--retry-min`、`--retry-max`；本机网卡信息不代表目标可达。
+`targets` 保存私有 access 或 host 票据文件的引用，不复制票据；使用命令仍会校验所需角色。移除名称不删除凭据，也不撤销访问。默认配置目录可通过 `SHELLPIER_CONFIG_DIR` 或 `--config-dir` 指定。远端命令接受 `target:NAME`；引用失效时更新票据与名称。`doctor --target` 按阶段报告票据、网络/SSH 与能力检查；受限模式身份阶段显示 `not_available_in_access_mode`，不作为整体诊断失败，也不声称已验证命令身份或实际探测 SFTP。它支持 `--interface`、`--retries`、`--retry-min`、`--retry-max`；本机网卡信息不代表目标可达。
 
 ## 目录、续传与传输进度
 
@@ -176,11 +202,19 @@ shellpier targets remove lab --json
 | `--max-depth 32` | 递归深度上限，可设 0..128 |
 | `--resume --resume-state ./transfer.json` | 单文件专用，使用私有本地 journal 与本次部分文件；不与递归合用 |
 | `--progress jsonl` | 进度事件写 stderr；`--json` 最终摘要写 stdout |
+| `--dry-run` | 只读预检并输出计划，不创建目标或续传状态；不能与 resume 合用 |
+| `--verify` | 比较源文件传输前后状态与 SHA256，再独立读取目标比较 SHA256 |
+| `--preserve-times` | 新建文件和目录保留秒级 mtime；不保留原 atime、权限或所有权 |
+| `--skip-identical` | 允许已有目录；已有文件仅在 SHA256 相同时跳过，不同则预检报错；不能与 resume 合用 |
+| `--bwlimit 1048576` | 整次操作的字节/秒预算，默认 `0` 不限速；复制、哈希与续传前缀校验共享预算，不含 metadata/SSH framing |
+
 
 ```sh
 shellpier upload target:lab ./build remote-build --recursive --exclude '*.tmp' --progress jsonl --json
 shellpier download target:lab remote.bin ./received.bin --resume --resume-state ./transfer.json --json
 shellpier files checksum target:lab remote.bin --json
+shellpier upload target:lab ./build remote-build --recursive --dry-run --skip-identical --json
+shellpier upload target:lab ./build remote-build --recursive --skip-identical --verify --preserve-times --bwlimit 1048576 --json
 ```
 
 `files checksum` 流式计算远端普通文件的 SHA256。续传只复用匹配本次传输身份的部分文件，不覆盖已完成目标；它不是任意远端文件的追加入口。网络中断后显式再次运行同一续传命令，不自动重放写入。
@@ -213,6 +247,8 @@ shellpier forward @access.json --to 127.0.0.1:8080 --listen 127.0.0.1:0 --json
 ```
 
 `--allow-forward` 可重复，`host` 同样支持；目标 host 全局最多 8 条并发转发连接。控制端仅监听 loopback，`--timeout 0` 使用票据期限；停止进程会关闭转发。它承载 TCP，不自动发现目标服务或扩大允许范围。
+
+原生 OpenSSH 还可复用同一允许列表，例如 `ssh -F ./ssh-session/ssh_config -N -D 127.0.0.1:1080 shellpier` 提供本地 SOCKS 入口，或 `-L /tmp/new-private-dir/service.sock:127.0.0.1:8080` 使用本地 Unix socket。只允许访问 host 预先授权的精确 TCP 目标，后者须使用自己拥有的私有新目录。内置 `forward` 没有这两种入口；远端 Unix socket、反向监听和任意目标代理未实现。
 
 ## Terminal 请求确认、等待与可选日志
 
@@ -248,7 +284,7 @@ shellpier service stop lab --json
 shellpier service uninstall lab --json
 ```
 
-`plan` 只输出计划，`install` 创建用户级配置但不立即启动；`start` 才启动当前会话。`--autostart` 显式选择以后登录时启动，不指定则不设置登录自启。`plan/install` 还接受 `--shell`、`--work-dir`、`--keep-awake`、`--allow-jobs`；所有动作支持 `--dry-run`、`--json` 和 `--config-dir`。
+`plan` 只输出计划，`install` 创建用户级配置但不立即启动；`start` 才启动当前会话。`--autostart` 显式选择以后登录时启动，不指定则不设置登录自启。`plan/install` 还接受 `--shell`、`--work-dir`、`--keep-awake`、`--allow-jobs`、`--access-mode`；所有动作支持 `--dry-run`、`--json` 和 `--config-dir`。
 
 服务复用已有私有 host 票据，不创建或续期授权；有限票据仍会到期。start 校验安装时绑定的票据身份，换成另一会话 ID 后拒绝启动，需要显式卸载、重新安装。停止或卸载不删除票据；中继撤销未确认时用原 host 票据执行 `revoke`。这是当前用户的生命周期管理，不保证注销、睡眠或系统重启后的所有任务恢复。
 
