@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/netip"
 	"strconv"
+	"strings"
 	"sync"
 
 	"github.com/Boulea7/shellpier/internal/access"
@@ -16,6 +17,9 @@ import (
 )
 
 func forwardListenerAddress(address string) (string, error) {
+	if !strings.Contains(address, ":") {
+		address = net.JoinHostPort("127.0.0.1", address)
+	}
 	host, portText, err := net.SplitHostPort(address)
 	if err != nil {
 		return "", errors.New("forward listen requires a loopback host and numeric port")
@@ -27,17 +31,18 @@ func forwardListenerAddress(address string) (string, error) {
 	if err != nil || ip.Zone() != "" || !ip.Unmap().IsLoopback() {
 		return "", errors.New("forward listener must bind a literal loopback address or localhost")
 	}
-	port, err := strconv.Atoi(portText)
-	if err != nil || port < 0 || port > 65535 || strconv.Itoa(port) != portText {
-		return "", errors.New("forward listen port must be canonical decimal 0..65535")
+	port, err := strconv.ParseUint(portText, 10, 16)
+	if err != nil {
+		return "", errors.New("forward listen port must be numeric 0..65535")
 	}
-	return net.JoinHostPort(ip.Unmap().String(), strconv.Itoa(port)), nil
+	return net.JoinHostPort(ip.Unmap().String(), strconv.Itoa(int(port))), nil
 }
 
 func forward(parent context.Context, args []string, stdout, stderr io.Writer) error {
 	f := flags("forward", stderr)
-	listen := f.String("listen", "127.0.0.1:0", "local loopback listener")
-	target := f.String("to", "", "exact target host:port enrolled by host --allow-forward")
+	listen := f.String("listen", "127.0.0.1:0", "loopback listener; a port alone uses 127.0.0.1")
+	reverse := f.Bool("reverse", false, "listen on the remote host and connect to a local target")
+	target := f.String("to", "", "destination host:port; on the control computer with --reverse")
 	timeout := f.Duration("timeout", 0, "total forwarding lifetime; 0 uses ticket lifetime")
 	machine := f.Bool("json", false, "emit listener metadata as JSON")
 	iface := f.String("interface", "", "direct SSH network interface")
@@ -81,28 +86,49 @@ func forward(parent context.Context, args []string, stdout, stderr io.Writer) er
 		return err
 	}
 	defer client.Close()
-	listener, err := net.Listen("tcp", localAddress)
+	var listener net.Listener
+	if *reverse {
+		listener, err = client.Listen("tcp", localAddress)
+	} else {
+		listener, err = net.Listen("tcp", localAddress)
+	}
 	if err != nil {
 		return err
 	}
-	defer listener.Close()
+	defer func() { _ = client.Close(); _ = listener.Close() }()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	// A transport loss ends this listener, including all accepted connections.
 	lost := make(chan error, 1)
 	refused := make(chan error, 1)
 	go func() { err := client.Wait(); lost <- err; cancel(); _ = listener.Close() }()
-	stop := context.AfterFunc(ctx, func() { _ = listener.Close(); _ = client.Close() })
+	stop := context.AfterFunc(ctx, func() { _ = client.Close(); _ = listener.Close() })
 	defer stop()
 	event := struct {
 		SchemaVersion int    `json:"schema_version"`
 		Command       string `json:"command"`
 		Event         string `json:"event"`
-		LocalAddress  string `json:"local_address"`
+		Direction     string `json:"direction"`
+		LocalAddress  string `json:"local_address,omitempty"`
 		Target        string `json:"target"`
-	}{1, "forward", "listening", listener.Addr().String(), destination}
+		RemoteAddress string `json:"remote_address,omitempty"`
+		LocalTarget   string `json:"local_target,omitempty"`
+	}{SchemaVersion: 1, Command: "forward", Event: "listening", Direction: "local", LocalAddress: listener.Addr().String(), Target: destination}
+	if *reverse {
+		event.Direction = "reverse"
+		event.RemoteAddress = event.LocalAddress
+		event.LocalAddress = ""
+		event.LocalTarget = destination
+	}
 	if *machine {
 		err = json.NewEncoder(stdout).Encode(event)
 	} else {
-		_, err = fmt.Fprintf(stdout, "Forward listening: %s -> %s\nKeep this process open; transport loss stops forwarding.\n", event.LocalAddress, destination)
+		if *reverse {
+			_, err = fmt.Fprintf(stdout, "Reverse forward listening on remote host: %s -> local %s\nKeep this process open; transport loss stops forwarding.\n", event.RemoteAddress, destination)
+		} else {
+			_, err = fmt.Fprintf(stdout, "Forward listening: %s -> %s\nKeep this process open; transport loss stops forwarding.\n", event.LocalAddress, destination)
+		}
 	}
 	if err != nil {
 		return err
@@ -130,7 +156,7 @@ func forward(parent context.Context, args []string, stdout, stderr io.Writer) er
 					return ctx.Err()
 				}
 			}
-			return err
+			return access.ConnectionError(client, err)
 		}
 		select {
 		case slots <- struct{}{}:
@@ -144,7 +170,13 @@ func forward(parent context.Context, args []string, stdout, stderr io.Writer) er
 			defer func() { <-slots }()
 			defer conn.Close()
 			dialCtx, done := context.WithTimeout(ctx, sshd.DefaultForwardDialTimeout)
-			remote, err := client.DialContext(dialCtx, "tcp", destination)
+			var remote net.Conn
+			var err error
+			if *reverse {
+				remote, err = (&net.Dialer{}).DialContext(dialCtx, "tcp", destination)
+			} else {
+				remote, err = client.DialContext(dialCtx, "tcp", destination)
+			}
 			done()
 			if err != nil {
 				select {

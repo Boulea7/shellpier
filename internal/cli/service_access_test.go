@@ -54,8 +54,6 @@ func TestServiceRestrictedAccessPolicy(t *testing.T) {
 func TestServiceAccessPolicyFailsBeforeTicketOrManager(t *testing.T) {
 	cases := [][]string{
 		{"--access-mode", "other"},
-		{"--access-mode", "sftp", "--allow-jobs"},
-		{"--access-mode", "sftp-readonly", "--allow-forward", "127.0.0.1:8080"},
 	}
 	for _, opts := range cases {
 		t.Run(strings.Join(opts, "_"), func(t *testing.T) {
@@ -89,9 +87,17 @@ func TestServiceManifestAccessPolicyCompatibility(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Old version-1 manifests omit access_mode and render the same full-access arguments.
-	m.AccessMode = ""
+	m.Version, m.AccessMode, m.AllowJobs = 1, "", false
 	if err = os.WriteFile(path, mustServiceJSON(m), 0600); err != nil {
 		t.Fatal(err)
+	}
+	for path, data := range map[string]string{m.Resource: renderService(m, env, false), m.Registration: renderService(m, env, true)} {
+		if err := os.WriteFile(path, []byte(data), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if strings.Contains(strings.Join(serviceArgs(m), " "), "--allow-jobs") {
+		t.Fatal("v1 rendering changed")
 	}
 	if err = run("start"); err != nil {
 		t.Fatalf("legacy service changed semantics: %v", err)
@@ -104,11 +110,11 @@ func TestServiceManifestAccessPolicyCompatibility(t *testing.T) {
 	if err = run("start"); err == nil || len(*calls) != before {
 		t.Fatal("unknown manifest policy reached manager")
 	}
-	m.AccessMode, m.AllowJobs = "sftp-readonly", true
+	m.AccessMode, m.AllowJobs = "sftp-readonly", false
 	if err = os.WriteFile(path, mustServiceJSON(m), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if err = run("start"); err == nil || len(*calls) != before {
-		t.Fatal("contradictory manifest policy reached manager")
+	if read, err := readServiceManifest(path, env, "demo"); err != nil || read.AccessMode != "sftp-readonly" {
+		t.Fatalf("restricted legacy read failed: %+v %v", read, err)
 	}
 }

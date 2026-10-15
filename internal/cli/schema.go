@@ -48,17 +48,18 @@ var retrySpecFlags = []flagSpec{
 	specFlag("retry-max", "duration", "3s", "Maximum connection retry delay"),
 }
 var hostSpecFlags = []flagSpec{
-	specFlag("access-mode", "string", "full", "full, sftp, or sftp-readonly; restricted modes reject commands, jobs and forwarding"),
+	specFlag("access-mode", "string", "full", "full, sftp, or sftp-readonly; file modes disable commands and forwarding"),
+	specFlag("root", "string", "", "Share only this directory through SFTP; remote paths start at /"),
 	specFlag("keep-awake", "bool", "false", "Temporarily inhibit automatic sleep"),
 	specFlag("shell", "string", "auto", "Target shell: auto, powershell, cmd, sh"),
 	specFlag("work-dir", "string", "", "Remote starting directory"),
 	specFlag("reconnect-min", "duration", "1s", "Minimum host relay reconnect delay"),
 	specFlag("reconnect-max", "duration", "30s", "Maximum host relay reconnect delay"),
-	specFlag("allow-jobs", "bool", "false", "Allow bounded host-managed jobs across SSH disconnects"),
+	specFlag("allow-jobs", "bool", "true", "Allow jobs in full mode; false disables"),
 	specFlag("max-jobs", "int", "128", "Host-lifetime capacity including completed jobs; 1..1024"),
 	specFlag("max-running-jobs", "int", "4", "Concurrent jobs; 1..64 and no more than max-jobs"),
 	specFlag("job-log-limit", "int", "1048576", "Retained log bytes per job stream; 1024..16777216"),
-	specFlag("allow-forward", "string[]", "", "Exact allowed HOST:PORT; repeat at most 32 times"),
+	specFlag("allow-forward", "string[]", "", "Optional forwarding target limit; full mode otherwise allows all"),
 }
 var execSpecFlags = specFlags(interfaceSpecFlag, retrySpecFlags, jsonSpecFlag, []flagSpec{
 	specFlag("timeout", "duration", "0s", "Total command timeout; zero uses ticket lifetime"),

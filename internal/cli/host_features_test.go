@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -62,57 +61,49 @@ func hostFeatureCaps(t *testing.T, client *ssh.Client) map[string]any {
 	}
 	return values
 }
-func TestHostFeaturesDefaultDisabledAndOptIn(t *testing.T) {
+func TestHostFeaturesDefaultsAndExplicitDisable(t *testing.T) {
 	t.Setenv("SHELLPIER_RELAY_URL", "")
-	target, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer target.Close()
-	go func() {
-		conn, err := target.Accept()
-		if err == nil {
-			defer conn.Close()
-			io.Copy(conn, conn)
-		}
-	}()
-	for _, enabled := range []bool{false, true} {
-		t.Run(fmt.Sprint(enabled), func(t *testing.T) {
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = io.WriteString(w, "default forwarding") }))
+	defer backend.Close()
+	target := strings.TrimPrefix(backend.URL, "http://")
+	for _, disabled := range []bool{false, true} {
+		t.Run(fmt.Sprint(disabled), func(t *testing.T) {
 			ticket := filepath.Join(t.TempDir(), "access.json")
 			args := []string{"share", "--listen", "127.0.0.1:0", "--ttl", "0", "--output", ticket, "--json"}
-			if enabled {
-				args = append(args, "--allow-jobs", "--allow-forward", target.Addr().String())
+			if disabled {
+				args = append(args, "--allow-jobs=false", "--allow-forward", target)
 			}
 			state, done := startHost(t, args...)
 			client := hostFeatureDial(t, ticket)
 			caps := hostFeatureCaps(t, client)
-			if caps["jobs"] != enabled || caps["forward"] != enabled {
-				t.Fatal("host capabilities did not reflect explicit opt-in")
+			if caps["jobs"] != !disabled || caps["forward"] != true || caps["reverse_forward"] != true {
+				t.Fatalf("unexpected defaults: %v", caps)
 			}
 			ok, _, err := client.SendRequest("jobs@shellpier", true, []byte(`{"action":"list"}`))
-			if err != nil || ok != enabled {
-				t.Fatal("jobs permission did not match host opt-in")
+			if err != nil || ok == disabled {
+				t.Fatalf("jobs disable not honored: %t %v", ok, err)
 			}
-			forwarded, err := client.Dial("tcp", target.Addr().String())
-			if !enabled {
-				if err == nil {
-					forwarded.Close()
-					t.Fatal("forwarding worked without opt-in")
-				}
-			} else {
-				if err != nil {
-					t.Fatal(err)
-				}
-				forwarded.SetDeadline(time.Now().Add(time.Second))
-				if _, err = forwarded.Write([]byte("echo")); err != nil {
-					t.Fatal(err)
-				}
-				result := make([]byte, 4)
-				if _, err = io.ReadFull(forwarded, result); err != nil || string(result) != "echo" {
-					t.Fatal("allowed forwarding did not carry data")
-				}
-				forwarded.Close()
+			forwarded, err := client.Dial("tcp", target)
+			if err != nil {
+				t.Fatal(err)
 			}
+			forwarded.SetDeadline(time.Now().Add(time.Second))
+			_, err = io.WriteString(forwarded, "GET / HTTP/1.0\r\nHost: localhost\r\n\r\n")
+			if err != nil {
+				t.Fatal(err)
+			}
+			data, err := io.ReadAll(forwarded)
+			forwarded.Close()
+			if err != nil || !bytes.Contains(data, []byte("default forwarding")) {
+				t.Fatalf("forward result: %q %v", data, err)
+			}
+			if disabled {
+				if conn, err := client.Dial("tcp", "127.0.0.1:1"); err == nil {
+					conn.Close()
+					t.Fatal("optional allowlist ignored")
+				}
+			}
+			client.Close()
 			invoke(t, "stop", "--state", state)
 			awaitHost(t, done, state)
 		})
@@ -216,7 +207,7 @@ func TestHostFeaturesJobsStopAndTTL(t *testing.T) {
 			if runtime.GOOS == "windows" {
 				shell = "cmd"
 			}
-			state, done := startHost(t, "share", "--listen", "127.0.0.1:0", "--ttl", ttl, "--allow-jobs", "--shell", shell, "--output", ticket, "--json")
+			state, done := startHost(t, "share", "--listen", "127.0.0.1:0", "--ttl", ttl, "--shell", shell, "--output", ticket, "--json")
 			client := hostFeatureDial(t, ticket)
 			process := hostFeatureJobProcess(t, client, dir)
 			client.Close()

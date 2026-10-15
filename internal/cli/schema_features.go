@@ -1,7 +1,7 @@
 package cli
 
 func featureCommandSpecs() []commandSpec {
-	jobSpec := command("jobs", "Manage bounded host-owned background tasks", "jobs ACTION TICKET [JOB-ID] [flags]", "metadata", "job state and bounded output; host must enable allow-jobs", []string{"network", "optional_remote_exec"}, nil)
+	jobSpec := command("jobs", "Manage bounded host-owned background tasks", "jobs ACTION TICKET [JOB-ID] [flags]", "metadata", "job state and bounded output; enabled in full mode", []string{"network", "optional_remote_exec"}, nil)
 	for _, action := range []string{"start", "status", "operation", "list", "logs", "wait", "cancel"} {
 		timeout := "20s"
 		if action == "start" || action == "wait" {
@@ -26,7 +26,7 @@ func featureCommandSpecs() []commandSpec {
 		}
 		jobSpec.Subcommands = append(jobSpec.Subcommands, command(action, "Host-managed job "+action, usage+" [flags]", "metadata_or_bytes", "job response; wait returns nonzero when the job fails; logs JSON uses base64", effects, flags))
 	}
-	forwardSpec := command("forward", "Forward a loopback port to an allowed remote destination", "forward TICKET --to HOST:PORT [flags]", "foreground", "listening address; stops on cancellation, expiry or connection failure", []string{"listener", "network"}, specFlags(jsonSpecFlag, interfaceSpecFlag, retrySpecFlags, []flagSpec{specFlag("listen", "string", "127.0.0.1:0", "Loopback bind address only"), specFlag("to", "string", "", "Exact destination allowed by host"), specFlag("timeout", "duration", "0s", "Forward lifetime; zero uses ticket lifetime")}))
+	forwardSpec := command("forward", "Forward a loopback port through SSH", "forward TICKET --to HOST:PORT [flags]", "foreground", "listening address; stops on cancellation, expiry or connection failure", []string{"listener", "network"}, specFlags(jsonSpecFlag, interfaceSpecFlag, retrySpecFlags, []flagSpec{specFlag("listen", "string", "127.0.0.1:0", "Loopback bind address or port; remote with reverse"), specFlag("reverse", "bool", "false", "Listen on the remote computer and connect to a local destination"), specFlag("to", "string", "", "Destination HOST:PORT on the other side"), specFlag("timeout", "duration", "0s", "Forward lifetime; zero uses ticket lifetime")}))
 	targetSpec := command("targets", "Manage private local ticket references", "targets ACTION [NAME] [flags]", "metadata", "safe alias metadata; credentials are neither copied nor renewed", []string{"local_read", "optional_local_write"}, nil)
 	for _, action := range []string{"add", "list", "show", "remove"} {
 		flags := specFlags(jsonSpecFlag, []flagSpec{specFlag("config-dir", "string", "", "Private config directory; SHELLPIER_CONFIG_DIR or user config/shellpier")})
@@ -48,8 +48,8 @@ func featureCommandSpecs() []commandSpec {
 		flags := specFlags(jsonSpecFlag, []flagSpec{specFlag("config-dir", "string", "", "Private configuration directory"), specFlag("dry-run", "bool", "false", "Describe without modifying files or manager state")})
 		effects := []string{"local_read"}
 		if action == "plan" || action == "install" {
-			flags = append(flags, specFlag("access-mode", "string", "full", "full, sftp, or sftp-readonly; restricted modes disable commands and forwarding"))
-			flags = append(flags, specFlag("ticket", "string", "", "Existing host ticket file or target:NAME"), specFlag("autostart", "bool", "false", "Opt into startup at user login; install does not start now"), specFlag("shell", "string", "auto", "Target shell"), specFlag("work-dir", "string", "", "Remote starting directory"), specFlag("keep-awake", "bool", "false", "Inhibit sleep while host runs"), specFlag("allow-jobs", "bool", "false", "Enable host-managed jobs"), specFlag("allow-forward", "string[]", "", "Repeatable exact allowed HOST:PORT"))
+			flags = append(flags, specFlag("access-mode", "string", "full", "full, sftp, or sftp-readonly; file modes disable commands and forwarding"), specFlag("root", "string", "", "Share only this directory through SFTP; remote paths start at /"))
+			flags = append(flags, specFlag("ticket", "string", "", "Existing host ticket file or target:NAME"), specFlag("autostart", "bool", "false", "Opt into startup at user login; install does not start now"), specFlag("shell", "string", "auto", "Target shell"), specFlag("work-dir", "string", "", "Remote starting directory"), specFlag("keep-awake", "bool", "false", "Inhibit sleep while host runs"), specFlag("allow-jobs", "bool", "true", "Allow jobs in full mode; false disables"), specFlag("allow-forward", "string[]", "", "Optional forwarding target limit; full mode otherwise allows all"))
 		}
 		if action != "plan" && action != "status" {
 			effects = append(effects, "local_write", "service_control")

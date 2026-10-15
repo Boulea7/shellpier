@@ -28,6 +28,7 @@ import (
 
 type hostOptions struct {
 	accessMode   string
+	fileRoot     string
 	awake        bool
 	shell        string
 	workdir      string
@@ -59,11 +60,12 @@ func (targets *forwardTargets) Set(value string) error {
 
 func hostFeatureFlags(f *flag.FlagSet, o *hostOptions) {
 	f.StringVar(&o.accessMode, "access-mode", "full", "full, sftp, or sftp-readonly; file modes reject commands and forwarding")
-	f.BoolVar(&o.allowJobs, "allow-jobs", false, "allow bounded jobs to continue after SSH disconnects")
+	f.StringVar(&o.fileRoot, "root", "", "share only this directory through SFTP; remote paths start at /")
+	f.BoolVar(&o.allowJobs, "allow-jobs", true, "allow background jobs in full mode; use --allow-jobs=false to disable")
 	f.IntVar(&o.maxJobs, "max-jobs", 128, "host-lifetime job capacity including completed jobs; 1..1024")
 	f.IntVar(&o.maxRunning, "max-running-jobs", 4, "concurrent jobs; 1..64 and no more than max-jobs")
 	f.IntVar(&o.jobLogLimit, "job-log-limit", 1<<20, "retained log bytes per job stream; 1024..16777216")
-	f.Var(&o.forwardTo, "allow-forward", "repeatable exact HOST:PORT allowed for local forwarding")
+	f.Var(&o.forwardTo, "allow-forward", "optional limit on forwarding targets; repeat HOST:PORT; full mode otherwise allows all")
 }
 
 func share(ctx context.Context, args []string, stdout, stderr io.Writer) error {
@@ -164,10 +166,23 @@ func host(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 }
 
 func validateHostOptions(o hostOptions) error {
-	if _, err := validateHostAccessMode(o.accessMode, o.allowJobs, o.forwardTo); err != nil {
+	mode, err := sshd.ParseAccessMode(o.accessMode)
+	if err != nil {
 		return err
 	}
-	if o.allowJobs || o.maxJobs != 0 || o.maxRunning != 0 || o.jobLogLimit != 0 {
+	if o.fileRoot != "" {
+		root, err := os.OpenRoot(o.fileRoot)
+		if err != nil {
+			return fmt.Errorf("open shared directory: %w", err)
+		}
+		if err := root.Close(); err != nil {
+			return err
+		}
+		if mode == sshd.AccessFull {
+			mode = sshd.AccessSFTP
+		}
+	}
+	if mode == sshd.AccessFull && o.allowJobs {
 		if o.maxJobs < 1 || o.maxJobs > 1024 || o.maxRunning < 1 || o.maxRunning > 64 || o.maxRunning > o.maxJobs || o.jobLogLimit < 1024 || o.jobLogLimit > 16<<20 {
 			return errors.New("invalid job limits; consult host help")
 		}
@@ -179,6 +194,9 @@ func validateHostOptions(o hostOptions) error {
 	}
 	if o.reconnectMin <= 0 || o.reconnectMax < o.reconnectMin || o.reconnectMax > 24*time.Hour {
 		return errors.New("reconnect-min must be positive; reconnect-max must be at least reconnect-min and at most 24h")
+	}
+	if mode != sshd.AccessFull {
+		return nil
 	}
 	if _, err := platform.Command(o.shell, "", o.workdir); err != nil {
 		return err
@@ -195,17 +213,6 @@ func validateHostOptions(o hostOptions) error {
 	return nil
 }
 
-func validateHostAccessMode(value string, allowJobs bool, forward []string) (sshd.AccessMode, error) {
-	mode, err := sshd.ParseAccessMode(value)
-	if err != nil {
-		return "", err
-	}
-	if mode != sshd.AccessFull && (allowJobs || len(forward) > 0) {
-		return "", errors.New("restricted access-mode requires allow-jobs and allow-forward to be disabled")
-	}
-	return mode, nil
-}
-
 type localState struct {
 	Version    int       `json:"version"`
 	Kind       string    `json:"kind"`
@@ -217,7 +224,7 @@ type localState struct {
 }
 
 func serveHost(parent context.Context, h access.Ticket, a *access.Ticket, listener net.Listener, o hostOptions, stdout, stderr io.Writer) (result error) {
-	mode, err := validateHostAccessMode(o.accessMode, o.allowJobs, o.forwardTo)
+	mode, err := sshd.ParseAccessMode(o.accessMode)
 	if err != nil {
 		return err
 	}
@@ -248,7 +255,18 @@ func serveHost(parent context.Context, h access.Ticket, a *access.Ticket, listen
 		return errors.New("invalid authorized public key")
 	}
 	server := &sshd.Server{Signer: signer, AuthorizedKey: public, Shell: o.shell, WorkDir: o.workdir, AccessMode: mode}
-	if o.allowJobs {
+	if o.fileRoot != "" {
+		server.FileRoot, err = os.OpenRoot(o.fileRoot)
+		if err != nil {
+			return fmt.Errorf("open shared directory: %w", err)
+		}
+		defer func() { result = errors.Join(result, server.FileRoot.Close()) }()
+		if mode == sshd.AccessFull {
+			mode = sshd.AccessSFTP
+			server.AccessMode = mode
+		}
+	}
+	if mode == sshd.AccessFull && o.allowJobs {
 		options := jobs.DefaultOptions()
 		options.Shell, options.WorkDir = o.shell, o.workdir
 		options.MaxJobs, options.MaxConcurrent, options.LogBytes = o.maxJobs, o.maxRunning, o.jobLogLimit
@@ -261,10 +279,14 @@ func serveHost(parent context.Context, h access.Ticket, a *access.Ticket, listen
 			result = errors.Join(result, server.Jobs.Close())
 		}()
 	}
-	if len(o.forwardTo) > 0 {
-		server.Forward, err = sshd.NewForwardPolicy(o.forwardTo)
-		if err != nil {
-			return err
+	if mode == sshd.AccessFull {
+		server.Reverse = sshd.NewReverseForwardLimits()
+		server.Forward = sshd.NewUnrestrictedForwardPolicy()
+		if len(o.forwardTo) > 0 {
+			server.Forward, err = sshd.NewForwardPolicy(o.forwardTo)
+			if err != nil {
+				return err
+			}
 		}
 	}
 	dir, err := os.MkdirTemp("", "shellpier-")
@@ -371,7 +393,10 @@ func serveHost(parent context.Context, h access.Ticket, a *access.Ticket, listen
 			return err
 		}
 	} else {
-		fmt.Fprintf(stdout, "Session: %s\nCommands run as: %s\nState: %s\n", h.ID, identity, statePath)
+		fmt.Fprintf(stdout, "Session: %s\nCurrent user: %s\nState: %s\n", h.ID, identity, statePath)
+		if o.fileRoot != "" {
+			fmt.Fprintf(stdout, "Shared directory: %s (remote /; files only)\n", o.fileRoot)
+		}
 		if h.ExpiresAt.IsZero() {
 			fmt.Fprintln(stdout, "Lifetime: persistent until stopped")
 		} else {

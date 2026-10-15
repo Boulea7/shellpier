@@ -32,7 +32,7 @@ func TestShareAccessModesEndToEnd(t *testing.T) {
 			}
 			args := []string{"share", "--listen", "127.0.0.1:0", "--ttl", "0", "--shell", shell, "--work-dir", dir, "--output", ticket, "--json"}
 			if mode != "full" {
-				args = append(args, "--access-mode", mode)
+				args = append(args, "--access-mode", mode, "--allow-jobs", "--allow-forward", "localhost:12345")
 			}
 			state, done := startHost(t, args...)
 			client := hostFeatureDial(t, ticket)
@@ -51,7 +51,7 @@ func TestShareAccessModesEndToEnd(t *testing.T) {
 					t.Fatalf("default full exec failed: %v", err)
 				}
 			} else {
-				for _, name := range []string{"exec", "pty", "env", "cwd", "jobs", "forward"} {
+				for _, name := range []string{"exec", "pty", "env", "cwd", "jobs", "forward", "reverse_forward"} {
 					if caps[name] != false {
 						t.Fatalf("restricted capability %s enabled", name)
 					}
@@ -156,7 +156,7 @@ func TestShareAccessModesEndToEnd(t *testing.T) {
 
 func TestShareAccessModeRejectsBeforeOutput(t *testing.T) {
 	t.Setenv("SHELLPIER_RELAY_URL", "")
-	cases := [][]string{{"--access-mode", "invalid"}, {"--access-mode", "sftp", "--allow-jobs"}, {"--access-mode", "sftp-readonly", "--allow-jobs"}, {"--access-mode", "sftp", "--allow-forward", "127.0.0.1:12345"}, {"--access-mode", "sftp-readonly", "--allow-forward", "127.0.0.1:12345"}}
+	cases := [][]string{{"--access-mode", "invalid"}}
 	for _, arguments := range cases {
 		dir := t.TempDir()
 		ticket := filepath.Join(dir, "access.json")

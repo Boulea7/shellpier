@@ -128,12 +128,12 @@ func startForward(t *testing.T, ctx context.Context, ticket, target string) (str
 	return "", done
 }
 func TestForwardListenerValidation(t *testing.T) {
-	for _, address := range []string{"0.0.0.0:0", "[::]:0", "192.0.2.1:80", ":0", "local.example:0", "127.1:0", "[::1%zone]:0", "127.0.0.1:+1", "127.0.0.1:080"} {
+	for _, address := range []string{"0.0.0.0:0", "[::]:0", "192.0.2.1:80", ":0", "local.example:0", "127.1:0", "[::1%zone]:0", "127.0.0.1:+1"} {
 		if _, err := forwardListenerAddress(address); err == nil {
 			t.Errorf("accepted non-loopback or ambiguous listener %s", address)
 		}
 	}
-	for _, address := range []string{"127.0.0.1:0", "[::1]:0", "localhost:8080", "[::ffff:127.0.0.1]:0"} {
+	for _, address := range []string{"127.0.0.1:0", "[::1]:0", "localhost:8080", "[::ffff:127.0.0.1]:0", "08080", "127.0.0.1:080"} {
 		if _, err := forwardListenerAddress(address); err != nil {
 			t.Errorf("valid loopback rejected: %s %v", address, err)
 		}
@@ -182,7 +182,7 @@ func TestForwardCLIRefusalAndTransportLoss(t *testing.T) {
 		t.Run(map[bool]string{false: "denied", true: "transport_loss"}[loss], func(t *testing.T) {
 			hostCtx, hostCancel := context.WithCancel(context.Background())
 			defer hostCancel()
-			ticket := forwardTicket(t, hostCtx, nil, time.Minute)
+			ticket := forwardTicket(t, hostCtx, []string{"127.0.0.1:1"}, time.Minute)
 			address, done := startForward(t, context.Background(), ticket, "127.0.0.1:80")
 			if loss {
 				hostCancel()

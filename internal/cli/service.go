@@ -32,6 +32,7 @@ type serviceManifest struct {
 	TicketFile   string   `json:"ticket_file"`
 	Shell        string   `json:"shell"`
 	AccessMode   string   `json:"access_mode,omitempty"`
+	FileRoot     string   `json:"file_root,omitempty"`
 	WorkDir      string   `json:"work_dir,omitempty"`
 	KeepAwake    bool     `json:"keep_awake"`
 	Autostart    bool     `json:"autostart"`
@@ -100,7 +101,7 @@ func serviceWith(ctx context.Context, args []string, stdout, stderr io.Writer, e
 	configDir := f.String("config-dir", "", "private user configuration directory")
 	machine := f.Bool("json", false, "emit reviewable service metadata")
 	dry := f.Bool("dry-run", false, "describe without changing files or service state")
-	var ticketValue, workdirValue string
+	var ticketValue, workdirValue, fileRoot string
 	accessMode := "full"
 	shellValue := "auto"
 	var autostartValue, awakeValue, allowJobsValue bool
@@ -109,13 +110,14 @@ func serviceWith(ctx context.Context, args []string, stdout, stderr io.Writer, e
 	var forwards serviceStrings
 	if action == "plan" || action == "install" {
 		f.StringVar(&accessMode, "access-mode", "full", "full, sftp, or sftp-readonly; restricted modes disable commands and forwarding")
+		f.StringVar(&fileRoot, "root", "", "share only this directory through SFTP; remote paths start at /")
 		f.StringVar(ticket, "ticket", "", "existing private host ticket file or target:NAME")
 		f.BoolVar(autostart, "autostart", false, "start at future user logins; install does not start now")
 		f.StringVar(shell, "shell", "auto", "auto, sh, cmd or powershell")
 		f.StringVar(workdir, "work-dir", "", "host command starting directory")
 		f.BoolVar(awake, "keep-awake", false, "request sleep inhibition while the host runs")
-		f.BoolVar(allowJobs, "allow-jobs", false, "allow host-managed jobs")
-		f.Var(&forwards, "allow-forward", "allowed host:port forwarding destination; repeatable")
+		f.BoolVar(allowJobs, "allow-jobs", true, "allow jobs in full mode; use --allow-jobs=false to disable")
+		f.Var(&forwards, "allow-forward", "optional forwarding target limit; repeat HOST:PORT; full mode otherwise allows all")
 	}
 	if err := parseFlags(f, args[1:]); err != nil {
 		return err
@@ -134,8 +136,30 @@ func serviceWith(ctx context.Context, args []string, stdout, stderr io.Writer, e
 	manifestPath := filepath.Join(dir, "manifest.json")
 	var manifest serviceManifest
 	if action == "plan" || action == "install" {
-		if _, err = validateHostAccessMode(accessMode, *allowJobs, forwards); err != nil {
-			return err
+		mode, modeErr := sshd.ParseAccessMode(accessMode)
+		if modeErr != nil {
+			return modeErr
+		}
+		if fileRoot != "" {
+			fileRoot, err = filepath.Abs(fileRoot)
+			if err != nil {
+				return err
+			}
+			root, err := os.OpenRoot(fileRoot)
+			if err != nil {
+				return fmt.Errorf("open shared directory: %w", err)
+			}
+			if err := root.Close(); err != nil {
+				return err
+			}
+			if mode == sshd.AccessFull {
+				mode = sshd.AccessSFTP
+			}
+		}
+		accessMode = string(mode)
+		if mode != sshd.AccessFull {
+			*allowJobs = false
+			forwards = nil
 		}
 		switch *shell {
 		case "auto", "sh", "cmd", "powershell":
@@ -171,7 +195,7 @@ func serviceWith(ctx context.Context, args []string, stdout, stderr io.Writer, e
 		if err = serviceHostTicket(ref); err != nil {
 			return err
 		}
-		for _, value := range []string{ref, env.exe, *workdir, env.home, env.uid} {
+		for _, value := range []string{ref, env.exe, *workdir, fileRoot, env.home, env.uid} {
 			if len(value) > 4096 || strings.ContainsAny(value, "\r\n\x00") {
 				return errors.New("invalid service path or identity")
 			}
@@ -183,7 +207,7 @@ func serviceWith(ctx context.Context, args []string, stdout, stderr io.Writer, e
 		if _, err = rand.Read(marker); err != nil {
 			return err
 		}
-		manifest = serviceManifest{Version: 1, Name: f.Arg(0), OS: env.os, Program: env.exe, TicketFile: ref, Shell: *shell, WorkDir: *workdir, KeepAwake: *awake, Autostart: *autostart, Marker: hex.EncodeToString(marker)}
+		manifest = serviceManifest{Version: 2, Name: f.Arg(0), OS: env.os, Program: env.exe, TicketFile: ref, Shell: *shell, WorkDir: *workdir, FileRoot: fileRoot, KeepAwake: *awake, Autostart: *autostart, Marker: hex.EncodeToString(marker)}
 		hostTicket, e := access.Read("@" + ref)
 		if e != nil {
 			return e
@@ -471,8 +495,13 @@ func serviceArgs(m serviceManifest) []string {
 	if m.WorkDir != "" {
 		args = append(args, "--work-dir", m.WorkDir)
 	}
+	if m.FileRoot != "" {
+		args = append(args, "--root", m.FileRoot)
+	}
 	if m.AllowJobs {
 		args = append(args, "--allow-jobs")
+	} else if m.Version >= 2 {
+		args = append(args, "--allow-jobs=false")
 	}
 	for _, target := range m.AllowForward {
 		args = append(args, "--allow-forward", target)
@@ -586,10 +615,10 @@ func readServiceManifest(path string, env serviceEnvironment, name string) (serv
 	if err != nil {
 		return m, err
 	}
-	if json.Unmarshal(data, &m) != nil || m.Version != 1 || m.Name != name || m.OS != env.os || len(m.Marker) != 32 || m.Resource != serviceResource(env, name, m.Autostart, filepath.Dir(path)) || m.Registration != filepath.Join(filepath.Dir(path), "registration"+serviceExtension(env.os)) || !filepath.IsAbs(m.Program) || !filepath.IsAbs(m.TicketFile) {
+	if json.Unmarshal(data, &m) != nil || (m.Version != 1 && m.Version != 2) || m.Name != name || m.OS != env.os || len(m.Marker) != 32 || m.Resource != serviceResource(env, name, m.Autostart, filepath.Dir(path)) || m.Registration != filepath.Join(filepath.Dir(path), "registration"+serviceExtension(env.os)) || !filepath.IsAbs(m.Program) || !filepath.IsAbs(m.TicketFile) || m.FileRoot != "" && (!filepath.IsAbs(m.FileRoot) || strings.ContainsAny(m.FileRoot, "\r\n\x00")) {
 		return m, errors.New("invalid service ownership manifest")
 	}
-	if _, err := validateHostAccessMode(m.AccessMode, m.AllowJobs, m.AllowForward); err != nil {
+	if _, err := sshd.ParseAccessMode(m.AccessMode); err != nil {
 		return m, errors.New("invalid service access policy")
 	}
 	return m, nil
