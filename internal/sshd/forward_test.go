@@ -75,13 +75,13 @@ func forwardSSHClient(t *testing.T, parent context.Context, policy *ForwardPolic
 }
 
 func TestForwardTargetNormalization(t *testing.T) {
-	for input, want := range map[string]string{"EXAMPLE.com.:80": "example.com:80", "[::ffff:127.0.0.1]:80": "127.0.0.1:80", "[0:0:0:0:0:0:0:1]:80": "[::1]:80", "localhost:443": "localhost:443"} {
+	for input, want := range map[string]string{"EXAMPLE.com.:80": "example.com:80", "[::ffff:127.0.0.1]:80": "127.0.0.1:80", "[0:0:0:0:0:0:0:1]:80": "[::1]:80", "localhost:443": "localhost:443", "localhost:080": "localhost:80", "localhost:+80": "localhost:80"} {
 		got, err := NormalizeForwardTarget(input)
 		if err != nil || got != want {
 			t.Errorf("%s: %s %v", input, got, err)
 		}
 	}
-	for _, input := range []string{"*:80", ":80", "127.1:80", "127.0.0.01:80", "2130706433:80", "0x7f000001:80", "127.0.0.1:0", "localhost:080", "localhost:+80", "[fe80::1%en0]:80", "a..b:80", "a_b:80", "https://host:80", "-bad:80", "[::1]:65536", " host:80"} {
+	for _, input := range []string{"*:80", ":80", "127.1:80", "127.0.0.01:80", "2130706433:80", "0x7f000001:80", "127.0.0.1:0", "[fe80::1%en0]:80", "a..b:80", "a_b:80", "https://host:80", "-bad:80", "[::1]:65536", " host:80"} {
 		if _, err := NormalizeForwardTarget(input); err == nil {
 			t.Errorf("accepted %s", input)
 		}

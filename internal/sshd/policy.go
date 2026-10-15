@@ -29,8 +29,13 @@ func ParseAccessMode(value string) (AccessMode, error) {
 		return "", fmt.Errorf("invalid access mode: expected full, sftp, or sftp-readonly")
 	}
 }
-func (s *Server) fullAccess() bool { return s.AccessMode == "" || s.AccessMode == AccessFull }
+func (s *Server) fullAccess() bool {
+	return s.FileRoot == nil && (s.AccessMode == "" || s.AccessMode == AccessFull)
+}
 func (s *Server) accessMode() AccessMode {
+	if s.FileRoot != nil && s.AccessMode != AccessSFTPReadOnly {
+		return AccessSFTP
+	}
 	if s.AccessMode == "" {
 		return AccessFull
 	}

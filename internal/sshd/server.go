@@ -24,6 +24,7 @@ const DefaultHandshakeTimeout = 10 * time.Second
 
 type Server struct {
 	AccessMode       AccessMode
+	FileRoot         *os.Root
 	Signer           ssh.Signer
 	AuthorizedKey    ssh.PublicKey
 	Shell            string
@@ -31,6 +32,7 @@ type Server struct {
 	HandshakeTimeout time.Duration
 	Jobs             *jobs.Manager
 	Forward          *ForwardPolicy
+	Reverse          *ReverseForwardLimits
 }
 
 func (s *Server) ServeConn(ctx context.Context, conn net.Conn) error {
@@ -79,9 +81,14 @@ func (s *Server) ServeConn(ctx context.Context, conn net.Conn) error {
 	if err := conn.SetDeadline(time.Time{}); err != nil {
 		return fmt.Errorf("clear SSH handshake deadline: %w", err)
 	}
-	go s.globalRequests(reqs)
 	var wg sync.WaitGroup
 	sem := make(chan struct{}, MaxSessions)
+	var reverse *reverseForwarder
+	if s.fullAccess() {
+		reverse = newReverseForwarder(ctx, sc, sem, s.Reverse)
+		defer reverse.Close()
+	}
+	go s.globalRequests(reqs, reverse)
 	for nc := range chans {
 		if nc.ChannelType() != "session" && nc.ChannelType() != "direct-tcpip" {
 			nc.Reject(ssh.UnknownChannelType, "unsupported SSH channel")

@@ -15,11 +15,16 @@ import (
 
 const DefaultForwardDialTimeout = 5 * time.Second
 
-// ForwardPolicy permits only explicitly enrolled host:port destinations.
-// Construct it once before serving connections; its allowlist is immutable.
+// ForwardPolicy optionally restricts TCP destinations and bounds active streams.
+// Construct it once before serving connections; its configuration is immutable.
 type ForwardPolicy struct {
-	allowed map[string]struct{}
-	slots   chan struct{}
+	allowed      map[string]struct{}
+	slots        chan struct{}
+	unrestricted bool
+}
+
+func NewUnrestrictedForwardPolicy() *ForwardPolicy {
+	return &ForwardPolicy{unrestricted: true, slots: make(chan struct{}, MaxSessions)}
 }
 
 func NewForwardPolicy(targets []string) (*ForwardPolicy, error) {
@@ -42,8 +47,8 @@ func NormalizeForwardTarget(target string) (string, error) {
 		return "", errors.New("forward target requires a host and numeric port")
 	}
 	port, err := strconv.Atoi(portText)
-	if err != nil || port < 1 || port > 65535 || strconv.Itoa(port) != portText {
-		return "", errors.New("forward target port must be canonical decimal 1..65535")
+	if err != nil || port < 1 || port > 65535 {
+		return "", errors.New("forward target port must be 1..65535")
 	}
 	if ip, err := netip.ParseAddr(host); err == nil {
 		if ip.Zone() != "" {
@@ -89,7 +94,7 @@ func (p *ForwardPolicy) Serve(ctx context.Context, incoming ssh.NewChannel) erro
 	if incoming.ChannelType() != "direct-tcpip" {
 		return reject(ssh.UnknownChannelType, "unsupported forwarding channel")
 	}
-	if p == nil || len(p.allowed) == 0 {
+	if p == nil || !p.unrestricted && len(p.allowed) == 0 {
 		return reject(ssh.Prohibited, "forwarding is disabled")
 	}
 	var request forwardChannelData
@@ -100,7 +105,7 @@ func (p *ForwardPolicy) Serve(ctx context.Context, incoming ssh.NewChannel) erro
 	if err != nil {
 		return reject(ssh.Prohibited, "invalid forwarding target")
 	}
-	if _, ok := p.allowed[target]; !ok {
+	if _, ok := p.allowed[target]; !p.unrestricted && !ok {
 		return reject(ssh.Prohibited, "forwarding target is not allowed")
 	}
 	select {

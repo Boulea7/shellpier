@@ -24,26 +24,31 @@ const (
 )
 
 type capabilities struct {
-	AccessMode   AccessMode `json:"access_mode"`
-	SFTPReadOnly bool       `json:"sftp_read_only"`
-	Protocol     int        `json:"protocol"`
-	OS           string     `json:"os"`
-	Arch         string     `json:"arch"`
-	Shell        string     `json:"shell"`
-	PTY          bool       `json:"pty"`
-	SFTP         bool       `json:"sftp"`
-	Exec         bool       `json:"exec"`
-	Env          bool       `json:"env"`
-	CWD          bool       `json:"cwd"`
-	ExecSignal   bool       `json:"exec_signal"`
-	PTYSignals   []string   `json:"pty_signals"`
-	Jobs         bool       `json:"jobs"`
-	JobsProtocol int        `json:"jobs_protocol,omitempty"`
-	Forward      bool       `json:"forward"`
+	ReverseForward bool       `json:"reverse_forward"`
+	FileRoot       bool       `json:"file_root"`
+	AccessMode     AccessMode `json:"access_mode"`
+	SFTPReadOnly   bool       `json:"sftp_read_only"`
+	Protocol       int        `json:"protocol"`
+	OS             string     `json:"os"`
+	Arch           string     `json:"arch"`
+	Shell          string     `json:"shell"`
+	PTY            bool       `json:"pty"`
+	SFTP           bool       `json:"sftp"`
+	Exec           bool       `json:"exec"`
+	Env            bool       `json:"env"`
+	CWD            bool       `json:"cwd"`
+	ExecSignal     bool       `json:"exec_signal"`
+	PTYSignals     []string   `json:"pty_signals"`
+	Jobs           bool       `json:"jobs"`
+	JobsProtocol   int        `json:"jobs_protocol,omitempty"`
+	Forward        bool       `json:"forward"`
 }
 
-func (s *Server) globalRequests(requests <-chan *ssh.Request) {
+func (s *Server) globalRequests(requests <-chan *ssh.Request, reverse *reverseForwarder) {
 	for request := range requests {
+		if reverse.HandleRequest(request) {
+			continue
+		}
 		if request.Type == JobsRequest && !s.fullAccess() {
 			request.Reply(false, nil)
 			continue
@@ -60,6 +65,8 @@ func (s *Server) globalRequests(requests <-chan *ssh.Request) {
 			shell = "auto"
 		}
 		result := capabilities{Protocol: 1, OS: runtime.GOOS, Arch: runtime.GOARCH, Shell: shell, PTY: platform.TerminalSupported(), SFTP: true, Exec: true, Env: true, CWD: true, PTYSignals: platform.TerminalSignals(), Jobs: s.Jobs != nil, Forward: s.Forward != nil}
+		result.ReverseForward = s.fullAccess()
+		result.FileRoot = s.FileRoot != nil
 		result.AccessMode = s.accessMode()
 		result.SFTPReadOnly = s.AccessMode == AccessSFTPReadOnly
 		if !s.fullAccess() {
@@ -76,7 +83,10 @@ func (s *Server) globalRequests(requests <-chan *ssh.Request) {
 func (s *Server) session(parent context.Context, ch ssh.Channel, requests <-chan *ssh.Request) {
 	ctx, cancel := context.WithCancel(parent)
 	var terminal platform.Terminal
-	var subsystem *sftp.Server
+	var subsystem interface {
+		Serve() error
+		Close() error
+	}
 	var finished chan struct{}
 	defer func() {
 		cancel()
@@ -211,6 +221,22 @@ func (s *Server) session(parent context.Context, ch ssh.Channel, requests <-chan
 			case "subsystem":
 				var value struct{ Name string }
 				if !started && !ptyRequested && ssh.Unmarshal(request.Payload, &value) == nil && value.Name == "sftp" {
+					if s.FileRoot != nil {
+						server := sftp.NewRequestServer(ch, rootedHandlers(s.FileRoot, s.AccessMode == AccessSFTPReadOnly), sftp.WithStartDirectory("/"))
+						subsystem = server
+						started = true
+						request.Reply(true, nil)
+						run(func() {
+							err := server.Serve()
+							status := uint32(0)
+							if err != nil && err != io.EOF {
+								status = 1
+							}
+							sendStatus(ch, status)
+						})
+						continue
+					}
+
 					var err error
 					serverOptions := []sftp.ServerOption{sftp.WithServerWorkingDirectory(options.WorkDir)}
 					var transport io.ReadWriteCloser = ch
