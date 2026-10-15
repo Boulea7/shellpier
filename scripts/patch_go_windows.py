@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Copy Go 1.27.2 and backport the Windows guard from upstream CL 828906.
 
-Only an isolated destination is modified. This is diagnostic infrastructure,
-not a change to the developer's installed toolchain or release configuration.
+Only an isolated destination is modified; the installed toolchain is untouched.
+CI and release packaging use the same verified backport as the diagnostics.
 """
 import argparse
 import hashlib
@@ -11,6 +11,11 @@ from pathlib import Path
 import shutil
 
 UPSTREAM = "0042b271db9c51f90d1887435026562a0778d7d9"
+# Full file hashes from the official go1.27.2 tag, not mutable branch content.
+ORIGINAL_SHA256 = {
+    "src/internal/runtime/syscall/windows/defs_windows.go": "82a168d384a59b581a2548664a79024c4d0e5c7135e8b8b1c6d367b63e402cd4",
+    "src/runtime/os_windows.go": "958086f0d0e2376e136f0eb3b2cf34fbc831f72d662c301c50f9499818ccb8d9",
+}
 CONSTANTS = """
 // GetThreadContext kernel state reporting, from winnt.h.
 const (
@@ -43,6 +48,9 @@ def patch(source: Path, destination: Path, evidence: Path):
         raise ValueError("only stock go1.27.2 is supported")
     paths = ["src/internal/runtime/syscall/windows/defs_windows.go", "src/runtime/os_windows.go"]
     original = [(source / name).read_bytes() for name in paths]
+    for name, data in zip(paths, original):
+        if hashlib.sha256(data).hexdigest() != ORIGINAL_SHA256[name]:
+            raise ValueError("Go1.27.2 source hash mismatch: " + name)
     defs, runtime = [data.decode() for data in original]
     if "CONTEXT_EXCEPTION_REQUEST" in defs:
         raise ValueError("source toolchain is already patched")
@@ -67,7 +75,7 @@ def patch(source: Path, destination: Path, evidence: Path):
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_bytes(data)
         records.append({"path": name, "before_sha256": hashlib.sha256(before).hexdigest(), "after_sha256": hashlib.sha256(after).hexdigest()})
-    manifest = {"upstream": UPSTREAM, "version": "go1.27.2", "adaptation": "Retain release branch wantAsyncPreempt condition and add upstream safe guard", "files": records}
+    manifest = {"upstream": UPSTREAM, "upstream_url": "https://github.com/golang/go/commit/" + UPSTREAM, "version": "go1.27.2", "adaptation": "Retain release branch wantAsyncPreempt condition and add upstream safe guard", "files": records}
     marker.write_text(json.dumps(manifest, indent=2) + "\n")
     (evidence / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
     return destination

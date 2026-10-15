@@ -9,14 +9,18 @@ import (
 	"runtime/debug"
 )
 
+// Set by packaging only when the Windows runtime guard is applied.
+var runtimePatch string
+
 type buildVersion struct {
-	Version     string `json:"version"`
-	OS          string `json:"os"`
-	Arch        string `json:"arch"`
-	Go          string `json:"go"`
-	VCSRevision string `json:"vcs_revision,omitempty"`
-	VCSTime     string `json:"vcs_time,omitempty"`
-	VCSModified bool   `json:"vcs_modified"`
+	Version      string `json:"version"`
+	OS           string `json:"os"`
+	Arch         string `json:"arch"`
+	Go           string `json:"go"`
+	RuntimePatch string `json:"runtime_patch,omitempty"`
+	VCSRevision  string `json:"vcs_revision,omitempty"`
+	VCSTime      string `json:"vcs_time,omitempty"`
+	VCSModified  bool   `json:"vcs_modified"`
 }
 
 func printVersion(args []string, stdout, stderr io.Writer, version string) error {
@@ -32,7 +36,7 @@ func printVersion(args []string, stdout, stderr io.Writer, version string) error
 		_, err := fmt.Fprintln(stdout, "shellpier", version)
 		return err
 	}
-	info := buildVersion{Version: version, OS: runtime.GOOS, Arch: runtime.GOARCH, Go: runtime.Version()}
+	info := buildVersion{Version: version, OS: runtime.GOOS, Arch: runtime.GOARCH, Go: runtime.Version(), RuntimePatch: runtimePatch}
 	if build, ok := debug.ReadBuildInfo(); ok {
 		for _, setting := range build.Settings {
 			switch setting.Key {

@@ -11,6 +11,8 @@ permissions:
   contents: read
 jobs:
   package:
+    env:
+      GOTOOLCHAIN: local
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7.0.1
@@ -22,6 +24,7 @@ jobs:
       - uses: actions/setup-python@v7.0.0
         with:
           python-version: '3.x'
+      - run: python scripts/test_patch_go_windows.py
       - run: go test ./...
       - run: python scripts/validate_skills.py
       - run: python scripts/validate_docs.py
@@ -37,9 +40,56 @@ jobs:
           name: shellpier-release
           path: dist/*
           if-no-files-found: error
+  windows-smoke:
+    needs: package
+    runs-on: windows-latest
+    env:
+      RELEASE_VERSION: ${{ inputs.version || github.ref_name }}
+      RUNTIME_PATCH: 0042b271db9c51f90d1887435026562a0778d7d9
+    steps:
+      - uses: actions/download-artifact@v8.0.2
+        with:
+          name: shellpier-release
+          path: dist
+      - name: Execute packaged Windows archive binaries
+        shell: pwsh
+        run: |
+          $sourceCommit = (Get-Content -LiteralPath 'dist/source-commit.txt' -Raw).Trim()
+          $evidence = Join-Path $env:RUNNER_TEMP 'shellpier-release-smoke'
+          New-Item -ItemType Directory -Path $evidence -Force | Out-Null
+          foreach ($arch in @('amd64', '386')) {
+            $archive = Join-Path $PWD "dist/shellpier_$($env:RELEASE_VERSION)_windows_$arch.zip"
+            $unpacked = Join-Path $env:RUNNER_TEMP "shellpier-release-$arch"
+            Expand-Archive -LiteralPath $archive -DestinationPath $unpacked
+            $binary = Join-Path $unpacked 'shellpier.exe'
+            $provenance = Get-Content -LiteralPath (Join-Path $unpacked 'runtime-patch.json') -Raw | ConvertFrom-Json
+            if ($provenance.upstream -ne $env:RUNTIME_PATCH -or $provenance.version -ne 'go1.27.2' -or $provenance.goarch -ne $arch -or $provenance.goos -ne 'windows') {
+              throw "Archive runtime provenance mismatch: $arch"
+            }
+            $versionText = & $binary version --json
+            if ($LASTEXITCODE -ne 0) { throw "Version failed for $arch with exit $LASTEXITCODE" }
+            $versionText | Set-Content -LiteralPath (Join-Path $evidence "$arch-version.json") -Encoding utf8
+            $version = $versionText | ConvertFrom-Json
+            if ($version.version -ne $env:RELEASE_VERSION -or $version.runtime_patch -ne $env:RUNTIME_PATCH -or $version.go -ne 'go1.27.2' -or $version.os -ne 'windows' -or $version.arch -ne $arch -or $version.vcs_revision -ne $sourceCommit -or $version.vcs_modified -ne $false) {
+              throw "Binary version or runtime provenance mismatch: $arch"
+            }
+            $doctorText = & $binary doctor --json
+            if ($LASTEXITCODE -ne 0) { throw "Doctor failed for $arch with exit $LASTEXITCODE" }
+            $doctorText | Set-Content -LiteralPath (Join-Path $evidence "$arch-doctor.json") -Encoding utf8
+            $doctor = $doctorText | ConvertFrom-Json
+            if ($doctor.network.os -ne 'windows' -or $doctor.network.arch -ne $arch -or -not $doctor.hostname -or -not $doctor.notes) {
+              throw "Doctor returned an invalid report: $arch"
+            }
+          }
+      - uses: actions/upload-artifact@v7.0.2
+        if: always()
+        with:
+          name: shellpier-release-windows-smoke
+          path: ${{ runner.temp }}/shellpier-release-smoke
+          if-no-files-found: error
   publish:
     if: startsWith(github.ref, 'refs/tags/')
-    needs: package
+    needs: [package, windows-smoke]
     runs-on: ubuntu-latest
     permissions:
       contents: write

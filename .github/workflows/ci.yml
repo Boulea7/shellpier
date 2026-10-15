@@ -28,16 +28,34 @@ jobs:
       - uses: actions/checkout@v7.0.1
       - uses: actions/setup-go@v7.0.0
         with:
-          go-version: 'stable'
+          go-version: ${{ runner.os == 'Windows' && '1.27.2' || 'stable' }}
           check-latest: true
           cache: true
       - uses: actions/setup-python@v7.0.0
         with:
           python-version: '3.x'
+      - if: runner.os == 'Windows'
+        run: python scripts/test_patch_go_windows.py
+      - if: runner.os == 'Windows'
+        name: Prepare verified Windows runtime guard
+        shell: pwsh
+        run: |
+          $stockRoot = go env GOROOT
+          $patchedRoot = Join-Path $env:RUNNER_TEMP 'shellpier-go-windows'
+          $patchedCache = Join-Path $env:RUNNER_TEMP 'shellpier-go-windows-cache'
+          python scripts/patch_go_windows.py --source "$stockRoot" --destination "$patchedRoot" --evidence "$env:RUNNER_TEMP/shellpier-runtime-patch"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          "GOROOT=$patchedRoot" >> $env:GITHUB_ENV
+          "GOCACHE=$patchedCache" >> $env:GITHUB_ENV
+          "GOTOOLCHAIN=local" >> $env:GITHUB_ENV
+          "$patchedRoot/bin" >> $env:GITHUB_PATH
       - run: go vet ./...
       - run: go test -race -timeout 5m ./...
       - run: go test -json -count=10 -timeout 10m ./...
-      - run: go build -o shellpier-smoke${{ runner.os == 'Windows' && '.exe' || '' }} ./cmd/shellpier
+      - if: runner.os != 'Windows'
+        run: go build -o shellpier-smoke ./cmd/shellpier
+      - if: runner.os == 'Windows'
+        run: go build -ldflags "-X github.com/Boulea7/shellpier/internal/cli.runtimePatch=0042b271db9c51f90d1887435026562a0778d7d9" -o shellpier-smoke.exe ./cmd/shellpier
       - if: runner.os != 'Windows'
         run: ./shellpier-smoke version && ./shellpier-smoke doctor --json
       - if: runner.os == 'Windows'
