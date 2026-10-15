@@ -96,3 +96,25 @@ func TestJSONRequestedOnlyLocalOptions(t *testing.T) {
 		}
 	}
 }
+
+func TestUnknownJobSubmissionJSONPreservesIdentityAndCause(t *testing.T) {
+	cause := &JobStartUnknownError{OperationID: "build-42", Err: context.DeadlineExceeded}
+	var diagnostics bytes.Buffer
+	err := WriteJSONError(&diagnostics, "jobs", cause)
+	if !errors.Is(err, context.DeadlineExceeded) || ExitCode(err) != 1 {
+		t.Fatal("unknown submission must preserve the cause and return an unknown-outcome failure")
+	}
+	var result struct {
+		Error jsonErrorDetail `json:"error"`
+	}
+	if err := json.Unmarshal(diagnostics.Bytes(), &result); err != nil {
+		t.Fatal(err)
+	}
+	if result.Error.Code != "outcome_unknown" || result.Error.OperationID != "build-42" || result.Error.Outcome != "unknown" {
+		t.Fatalf("lost retry identity: %+v", result.Error)
+	}
+	code := uint32(7)
+	if ExitCode(&ReportedError{Err: &JobExitError{State: "failed", Code: &code}}) != 7 {
+		t.Fatal("job failure lost its exit code")
+	}
+}

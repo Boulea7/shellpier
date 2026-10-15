@@ -13,17 +13,20 @@ import (
 )
 
 type remoteCapabilities struct {
-	Protocol   int      `json:"protocol"`
-	OS         string   `json:"os"`
-	Arch       string   `json:"arch"`
-	Shell      string   `json:"shell"`
-	PTY        bool     `json:"pty"`
-	SFTP       bool     `json:"sftp"`
-	Exec       bool     `json:"exec"`
-	Env        bool     `json:"env"`
-	CWD        bool     `json:"cwd"`
-	ExecSignal bool     `json:"exec_signal"`
-	PTYSignals []string `json:"pty_signals"`
+	Protocol     int      `json:"protocol"`
+	OS           string   `json:"os"`
+	Arch         string   `json:"arch"`
+	Shell        string   `json:"shell"`
+	PTY          bool     `json:"pty"`
+	SFTP         bool     `json:"sftp"`
+	Exec         bool     `json:"exec"`
+	Env          bool     `json:"env"`
+	CWD          bool     `json:"cwd"`
+	ExecSignal   bool     `json:"exec_signal"`
+	PTYSignals   []string `json:"pty_signals"`
+	Jobs         bool     `json:"jobs"`
+	JobsProtocol int      `json:"jobs_protocol,omitempty"`
+	Forward      bool     `json:"forward"`
 }
 
 func capabilities(ctx context.Context, args []string, stdout, stderr io.Writer) error {
@@ -74,10 +77,13 @@ func capabilities(ctx context.Context, args []string, stdout, stderr io.Writer) 
 			return errors.New("target returned invalid terminal signal capabilities")
 		}
 	}
+	if result.Jobs && result.JobsProtocol != 1 || !result.Jobs && result.JobsProtocol != 0 {
+		return errors.New("target returned invalid job capabilities")
+	}
 	if *asJSON {
 		return json.NewEncoder(stdout).Encode(result)
 	}
-	_, err = fmt.Fprintf(stdout, "Target: %s/%s\nShell: %s\nPTY: %t\nPTY signals: %s\nExec: %t\nSFTP: %t\nEnvironment: %t\nWorking directory: %t\n", result.OS, result.Arch, result.Shell, result.PTY, strings.Join(result.PTYSignals, ", "), result.Exec, result.SFTP, result.Env, result.CWD)
+	_, err = fmt.Fprintf(stdout, "Target: %s/%s\nShell: %s\nPTY: %t\nPTY signals: %s\nExec: %t\nSFTP: %t\nEnvironment: %t\nWorking directory: %t\nJobs: %t\nPort forwarding: %t\n", result.OS, result.Arch, result.Shell, result.PTY, strings.Join(result.PTYSignals, ", "), result.Exec, result.SFTP, result.Env, result.CWD, result.Jobs, result.Forward)
 	return err
 }
 

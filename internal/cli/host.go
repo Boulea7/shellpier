@@ -5,17 +5,20 @@ import (
 	"crypto/subtle"
 	"encoding/json"
 	"errors"
+	"flag"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/Boulea7/shellpier/internal/access"
+	"github.com/Boulea7/shellpier/internal/jobs"
 	"github.com/Boulea7/shellpier/internal/netutil"
 	"github.com/Boulea7/shellpier/internal/platform"
 	"github.com/Boulea7/shellpier/internal/relay"
@@ -31,6 +34,34 @@ type hostOptions struct {
 	json         bool
 	reconnectMin time.Duration
 	reconnectMax time.Duration
+	allowJobs    bool
+	maxJobs      int
+	maxRunning   int
+	jobLogLimit  int
+	forwardTo    forwardTargets
+}
+
+type forwardTargets []string
+
+func (targets *forwardTargets) String() string { return strings.Join(*targets, ",") }
+func (targets *forwardTargets) Set(value string) error {
+	if len(*targets) >= 32 {
+		return errors.New("allow-forward accepts at most 32 exact targets")
+	}
+	target, err := sshd.NormalizeForwardTarget(value)
+	if err != nil {
+		return err
+	}
+	*targets = append(*targets, target)
+	return nil
+}
+
+func hostFeatureFlags(f *flag.FlagSet, o *hostOptions) {
+	f.BoolVar(&o.allowJobs, "allow-jobs", false, "allow bounded jobs to continue after SSH disconnects")
+	f.IntVar(&o.maxJobs, "max-jobs", 128, "host-lifetime job capacity including completed jobs; 1..1024")
+	f.IntVar(&o.maxRunning, "max-running-jobs", 4, "concurrent jobs; 1..64 and no more than max-jobs")
+	f.IntVar(&o.jobLogLimit, "job-log-limit", 1<<20, "retained log bytes per job stream; 1024..16777216")
+	f.Var(&o.forwardTo, "allow-forward", "repeatable exact HOST:PORT allowed for local forwarding")
 }
 
 func share(ctx context.Context, args []string, stdout, stderr io.Writer) error {
@@ -41,6 +72,7 @@ func share(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	listen := f.String("listen", "0.0.0.0:0", "direct SSH listen address; ignored in relay mode")
 	iface := f.String("interface", "", "advertise addresses on this interface; --listen controls binding")
 	o := hostOptions{}
+	hostFeatureFlags(f, &o)
 	f.DurationVar(&o.reconnectMin, "reconnect-min", defaultReconnectMin, "minimum relay reconnect delay")
 	f.DurationVar(&o.reconnectMax, "reconnect-max", defaultReconnectMax, "maximum relay reconnect delay")
 	f.BoolVar(&o.awake, "keep-awake", false, "temporarily inhibit automatic system sleep")
@@ -98,6 +130,7 @@ func host(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	input, args := ticketArgument(args)
 	f := flags("host", stderr)
 	o := hostOptions{}
+	hostFeatureFlags(f, &o)
 	f.DurationVar(&o.reconnectMin, "reconnect-min", defaultReconnectMin, "minimum relay reconnect delay")
 	f.DurationVar(&o.reconnectMax, "reconnect-max", defaultReconnectMax, "maximum relay reconnect delay")
 	f.BoolVar(&o.awake, "keep-awake", false, "temporarily inhibit automatic system sleep")
@@ -129,6 +162,16 @@ func host(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 }
 
 func validateHostOptions(o hostOptions) error {
+	if o.allowJobs || o.maxJobs != 0 || o.maxRunning != 0 || o.jobLogLimit != 0 {
+		if o.maxJobs < 1 || o.maxJobs > 1024 || o.maxRunning < 1 || o.maxRunning > 64 || o.maxRunning > o.maxJobs || o.jobLogLimit < 1024 || o.jobLogLimit > 16<<20 {
+			return errors.New("invalid job limits; consult host help")
+		}
+	}
+	if len(o.forwardTo) > 0 {
+		if _, err := sshd.NewForwardPolicy(o.forwardTo); err != nil {
+			return err
+		}
+	}
 	if o.reconnectMin <= 0 || o.reconnectMax < o.reconnectMin || o.reconnectMax > 24*time.Hour {
 		return errors.New("reconnect-min must be positive; reconnect-max must be at least reconnect-min and at most 24h")
 	}
@@ -185,6 +228,25 @@ func serveHost(parent context.Context, h access.Ticket, a *access.Ticket, listen
 		return errors.New("invalid authorized public key")
 	}
 	server := &sshd.Server{Signer: signer, AuthorizedKey: public, Shell: o.shell, WorkDir: o.workdir}
+	if o.allowJobs {
+		options := jobs.DefaultOptions()
+		options.Shell, options.WorkDir = o.shell, o.workdir
+		options.MaxJobs, options.MaxConcurrent, options.LogBytes = o.maxJobs, o.maxRunning, o.jobLogLimit
+		server.Jobs, err = jobs.New(ctx, options)
+		if err != nil {
+			return err
+		}
+		defer func() {
+			cancel()
+			result = errors.Join(result, server.Jobs.Close())
+		}()
+	}
+	if len(o.forwardTo) > 0 {
+		server.Forward, err = sshd.NewForwardPolicy(o.forwardTo)
+		if err != nil {
+			return err
+		}
+	}
 	dir, err := os.MkdirTemp("", "shellpier-")
 	if err != nil {
 		return err

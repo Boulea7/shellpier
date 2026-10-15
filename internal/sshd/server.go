@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Boulea7/shellpier/internal/jobs"
 	"github.com/Boulea7/shellpier/internal/platform"
 	"golang.org/x/crypto/ssh"
 	"os"
@@ -27,6 +28,7 @@ type Server struct {
 	Shell            string
 	WorkDir          string
 	HandshakeTimeout time.Duration
+	Jobs             *jobs.Manager
 	Forward          *ForwardPolicy
 }
 

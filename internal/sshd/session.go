@@ -24,22 +24,27 @@ const (
 )
 
 type capabilities struct {
-	Protocol   int      `json:"protocol"`
-	OS         string   `json:"os"`
-	Arch       string   `json:"arch"`
-	Shell      string   `json:"shell"`
-	PTY        bool     `json:"pty"`
-	SFTP       bool     `json:"sftp"`
-	Exec       bool     `json:"exec"`
-	Env        bool     `json:"env"`
-	CWD        bool     `json:"cwd"`
-	ExecSignal bool     `json:"exec_signal"`
-	PTYSignals []string `json:"pty_signals"`
-	Forward    bool     `json:"forward"`
+	Protocol     int      `json:"protocol"`
+	OS           string   `json:"os"`
+	Arch         string   `json:"arch"`
+	Shell        string   `json:"shell"`
+	PTY          bool     `json:"pty"`
+	SFTP         bool     `json:"sftp"`
+	Exec         bool     `json:"exec"`
+	Env          bool     `json:"env"`
+	CWD          bool     `json:"cwd"`
+	ExecSignal   bool     `json:"exec_signal"`
+	PTYSignals   []string `json:"pty_signals"`
+	Jobs         bool     `json:"jobs"`
+	JobsProtocol int      `json:"jobs_protocol,omitempty"`
+	Forward      bool     `json:"forward"`
 }
 
 func (s *Server) globalRequests(requests <-chan *ssh.Request) {
 	for request := range requests {
+		if HandleJobsRequest(s.Jobs, request) {
+			continue
+		}
 		if request.Type != "capabilities@shellpier" || len(request.Payload) != 0 {
 			request.Reply(false, nil)
 			continue
@@ -48,7 +53,10 @@ func (s *Server) globalRequests(requests <-chan *ssh.Request) {
 		if shell == "" {
 			shell = "auto"
 		}
-		result := capabilities{Protocol: 1, OS: runtime.GOOS, Arch: runtime.GOARCH, Shell: shell, PTY: platform.TerminalSupported(), SFTP: true, Exec: true, Env: true, CWD: true, PTYSignals: platform.TerminalSignals(), Forward: s.Forward != nil}
+		result := capabilities{Protocol: 1, OS: runtime.GOOS, Arch: runtime.GOARCH, Shell: shell, PTY: platform.TerminalSupported(), SFTP: true, Exec: true, Env: true, CWD: true, PTYSignals: platform.TerminalSignals(), Jobs: s.Jobs != nil, Forward: s.Forward != nil}
+		if result.Jobs {
+			result.JobsProtocol = 1
+		}
 		payload, _ := json.Marshal(result)
 		request.Reply(true, payload)
 	}

@@ -41,6 +41,10 @@ func ExitCode(err error) int {
 	if err == nil {
 		return 0
 	}
+	var jobExit *JobExitError
+	if errors.As(err, &jobExit) {
+		return jobExit.ExitCode()
+	}
 	detail := classifyJSONError(err)
 	switch detail.Code {
 	case "usage":
@@ -61,6 +65,8 @@ type jsonErrorDetail struct {
 	Code           string `json:"code"`
 	Message        string `json:"message"`
 	RemoteExitCode *int   `json:"remote_exit_code,omitempty"`
+	OperationID    string `json:"operation_id,omitempty"`
+	Outcome        string `json:"outcome,omitempty"`
 }
 
 func classifyJSONError(err error) jsonErrorDetail {
@@ -68,8 +74,18 @@ func classifyJSONError(err error) jsonErrorDetail {
 	var remote interface{ ExitStatus() int }
 	var network net.Error
 	var usage *UsageError
+	var unknown *JobStartUnknownError
+	var jobExit *JobExitError
 	text := strings.ToLower(err.Error())
 	switch {
+	case errors.As(err, &unknown):
+		result.Code = "outcome_unknown"
+		result.Message = "Job submission could not be confirmed. Query this operation ID before retrying."
+		result.OperationID, result.Outcome = unknown.OperationID, "unknown"
+	case errors.As(err, &jobExit):
+		code := jobExit.ExitCode()
+		result.Code, result.Message = "remote_exit", "Remote job did not succeed; inspect the job result."
+		result.RemoteExitCode = &code
 	case errors.Is(err, context.Canceled):
 		result.Code = "canceled"
 		result.Message = "Operation was canceled."

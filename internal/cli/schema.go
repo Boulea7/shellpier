@@ -50,6 +50,11 @@ var hostSpecFlags = []flagSpec{
 	specFlag("work-dir", "string", "", "Remote starting directory"),
 	specFlag("reconnect-min", "duration", "1s", "Minimum host relay reconnect delay"),
 	specFlag("reconnect-max", "duration", "30s", "Maximum host relay reconnect delay"),
+	specFlag("allow-jobs", "bool", "false", "Allow bounded host-managed jobs across SSH disconnects"),
+	specFlag("max-jobs", "int", "128", "Host-lifetime capacity including completed jobs; 1..1024"),
+	specFlag("max-running-jobs", "int", "4", "Concurrent jobs; 1..64 and no more than max-jobs"),
+	specFlag("job-log-limit", "int", "1048576", "Retained log bytes per job stream; 1024..16777216"),
+	specFlag("allow-forward", "string[]", "", "Exact allowed HOST:PORT; repeat at most 32 times"),
 }
 var execSpecFlags = specFlags(interfaceSpecFlag, retrySpecFlags, jsonSpecFlag, []flagSpec{
 	specFlag("timeout", "duration", "0s", "Total command timeout; zero uses ticket lifetime"),
