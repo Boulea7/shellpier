@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
+	"unicode"
 
 	"github.com/Boulea7/shellpier/internal/platform"
 )
@@ -115,15 +117,80 @@ func rollbackConfig(dir string, files []ownedFile) error {
 	return errors.Join(failures...)
 }
 
+// SSHConfigOptions controls generated OpenSSH settings. Durations use whole seconds.
+type SSHConfigOptions struct {
+	ServerAliveInterval time.Duration
+	ServerAliveCountMax int
+	ControlPersist      time.Duration
+}
+
+func DefaultSSHConfigOptions() SSHConfigOptions {
+	return SSHConfigOptions{ServerAliveInterval: 15 * time.Second, ServerAliveCountMax: 3}
+}
+
+// Validate checks options and the destination path without creating files.
+func (options SSHConfigOptions) Validate(dir string) error {
+	absolute, err := filepath.Abs(dir)
+	if err != nil {
+		return err
+	}
+	_, err = configOptions(options, absolute, runtime.GOOS)
+	return err
+}
+
+func configOptions(options SSHConfigOptions, dir, goos string) (string, error) {
+	if options.ServerAliveInterval < 0 || options.ServerAliveInterval%time.Second != 0 {
+		return "", errors.New("ServerAliveInterval must be a nonnegative whole number of seconds")
+	}
+	if options.ServerAliveCountMax < 0 || int64(options.ServerAliveCountMax) > 2147483647 || options.ServerAliveInterval/time.Second > 2147483647 {
+		return "", errors.New("ServerAlive settings exceed OpenSSH integer bounds")
+	}
+	extra := fmt.Sprintf("  ServerAliveInterval %d\n  ServerAliveCountMax %d\n", options.ServerAliveInterval/time.Second, options.ServerAliveCountMax)
+	if options.ControlPersist == 0 {
+		return extra, nil
+	}
+	if goos == "windows" {
+		return "", errors.New("ControlPersist is supported only on Unix")
+	}
+	if options.ControlPersist < time.Second || options.ControlPersist > time.Hour || options.ControlPersist%time.Second != 0 {
+		return "", errors.New("ControlPersist must be whole seconds between 1s and 1h")
+	}
+	path := filepath.Join(dir, "control.sock")
+	// Leave room for OpenSSH's temporary socket suffix within sockaddr_un.sun_path.
+	if len(path) > 80 {
+		return "", errors.New("ControlPath is too long (maximum 80 bytes)")
+	}
+	if strings.IndexFunc(path, unicode.IsControl) >= 0 {
+		return "", errors.New("ControlPath contains a control character")
+	}
+	quoted, err := configQuote(path)
+	if err != nil {
+		return "", err
+	}
+	return extra + fmt.Sprintf("  ControlMaster auto\n  ControlPersist %d\n  ControlPath %s\n", options.ControlPersist/time.Second, quoted), nil
+}
+
 // WriteConfig creates a new private directory, leaving global SSH files untouched.
 func WriteConfig(t Ticket, dir, binaryPath string) (string, error) {
-	return writeConfig(t, dir, binaryPath, platform.SecureFile)
+	return WriteConfigWithOptions(t, dir, binaryPath, DefaultSSHConfigOptions())
 }
-func writeConfig(t Ticket, dir, binaryPath string, secure func(string) error) (configPath string, resultErr error) {
+
+// WriteConfigWithOptions creates an isolated configuration without starting an SSH master.
+func WriteConfigWithOptions(t Ticket, dir, binaryPath string, options SSHConfigOptions) (string, error) {
+	return writeConfigOptions(t, dir, binaryPath, options, platform.SecureFile)
+}
+func writeConfig(t Ticket, dir, binaryPath string, secure func(string) error) (string, error) {
+	return writeConfigOptions(t, dir, binaryPath, DefaultSSHConfigOptions(), secure)
+}
+func writeConfigOptions(t Ticket, dir, binaryPath string, options SSHConfigOptions, secure func(string) error) (configPath string, resultErr error) {
 	if _, err := clientConfig(t); err != nil {
 		return "", err
 	}
 	dir, err := filepath.Abs(dir)
+	if err != nil {
+		return "", err
+	}
+	extra, err := configOptions(options, dir, runtime.GOOS)
 	if err != nil {
 		return "", err
 	}
@@ -144,7 +211,7 @@ func writeConfig(t Ticket, dir, binaryPath string, secure func(string) error) (c
 		return "", err
 	}
 	alias := "shellpier-" + strings.ToLower(t.ID)
-	config := fmt.Sprintf("Host shellpier\n  HostName shellpier\n  User shellpier\n  HostKeyAlias %s\n  IdentityFile %s\n  UserKnownHostsFile %s\n  GlobalKnownHostsFile none\n  ProxyCommand %s\n  StrictHostKeyChecking yes\n  IdentityAgent none\n  IdentitiesOnly yes\n  BatchMode yes\n  RequestTTY no\n", alias, identity, known, proxy)
+	config := fmt.Sprintf("Host shellpier\n  HostName shellpier\n  User shellpier\n  HostKeyAlias %s\n  IdentityFile %s\n  UserKnownHostsFile %s\n  GlobalKnownHostsFile none\n  ProxyCommand %s\n  StrictHostKeyChecking yes\n  IdentityAgent none\n  IdentitiesOnly yes\n  BatchMode yes\n  RequestTTY no\n", alias, identity, known, proxy) + extra
 	data, err := json.MarshalIndent(t, "", "  ")
 	if err != nil {
 		return "", err
