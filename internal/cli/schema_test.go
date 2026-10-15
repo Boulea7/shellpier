@@ -57,7 +57,7 @@ func TestSchemaRegistryCoverage(t *testing.T) {
 			names[f.Name] = true
 		}
 	}
-	for _, name := range strings.Fields("share host invite connect proxy ssh-config doctor status stop revoke cleanup relay inspect check upload download keygen completion version help shell exec terminal files sessions schema capabilities") {
+	for _, name := range strings.Fields("share host invite connect proxy ssh-config doctor status stop revoke cleanup relay inspect check upload download keygen completion version help shell exec terminal files sessions schema capabilities jobs forward targets service mcp") {
 		if !seen[name] {
 			t.Errorf("missing command %s", name)
 		}
@@ -66,7 +66,7 @@ func TestSchemaRegistryCoverage(t *testing.T) {
 
 // Help rendering is checked against discovery metadata; it is not its source.
 func TestSchemaExistingHelpFlagsAgree(t *testing.T) {
-	names := strings.Fields("share host invite connect proxy ssh-config doctor status stop revoke cleanup relay inspect check upload download keygen version exec shell capabilities sessions schema")
+	names := strings.Fields("share host invite connect proxy ssh-config doctor status stop revoke cleanup relay inspect check upload download keygen version exec shell capabilities sessions schema forward")
 	expression := regexp.MustCompile(`(?m)^\s+-([a-z][a-z0-9-]*)\b`)
 	for _, name := range names {
 		t.Run(name, func(t *testing.T) {
@@ -103,7 +103,7 @@ func TestSchemaHostDefaultsAgree(t *testing.T) {
 
 func TestSchemaNestedHelpFlagsAgree(t *testing.T) {
 	expression := regexp.MustCompile(`(?m)^\s+-([a-z][a-z0-9-]*)\b`)
-	for _, parent := range []string{"files", "terminal"} {
+	for _, parent := range []string{"files", "terminal", "jobs", "targets", "service", "mcp"} {
 		spec, _ := findCommandSpec(parent)
 		for _, sub := range spec.Subcommands {
 			t.Run(parent+"_"+sub.Name, func(t *testing.T) {

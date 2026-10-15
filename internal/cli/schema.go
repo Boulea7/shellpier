@@ -183,7 +183,7 @@ func buildCommandSpecs() []commandSpec {
 			commands[i].Flags = specFlags(commands[i].Flags, jsonSpecFlag)
 		}
 	}
-	return commands
+	return append(commands, featureCommandSpecs()...)
 }
 func transferSpecFlags() []flagSpec {
 	return specFlags(interfaceSpecFlag, retrySpecFlags, jsonSpecFlag, []flagSpec{
