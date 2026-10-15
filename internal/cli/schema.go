@@ -99,8 +99,8 @@ func buildCommandSpecs() []commandSpec {
 		command("relay", "Run an authenticated WebSocket relay", "relay [flags]", "foreground", "listener metadata", []string{"listener", "optional_local_write"}, []flagSpec{specFlag("listen", "string", "127.0.0.1:8080", "Listener bind address"), specFlag("token-file", "string", "", "Enrollment key file"), specFlag("init-key", "string", "", "Create a private key and exit"), specFlag("max-sessions", "int", "64", "Session capacity"), specFlag("max-ttl", "duration", "24h0m0s", "Maximum nonpersistent lifetime"), specFlag("allow-persistent", "bool", "false", "Explicitly permit TTL zero"), specFlag("tls-cert", "string", "", "Native HTTPS PEM certificate"), specFlag("tls-key", "string", "", "Native HTTPS PEM key")}),
 		command("inspect", "Inspect a ticket without connecting", "inspect TICKET [flags]", "metadata", "credential-free ticket summary", local, jsonSpecFlag),
 		command("check", "Verify remote host and account", "check TICKET [flags]", "metadata", "identity and pinned key result", remote, specFlags(interfaceSpecFlag, retrySpecFlags, jsonSpecFlag, []flagSpec{specFlag("timeout", "duration", "20s", "Total identity check timeout")})),
-		command("upload", "Upload a file, directory or stdin without overwriting", "upload [flags] TICKET LOCAL|- REMOTE", "stream_or_metadata", "LOCAL=- reads stdin once; summary on stdout and optional progress on stderr; stream mode excludes recursive/resume/preserve-times/dry-run/skip-existing", []string{"optional_local_read", "optional_local_write", "network", "remote_write"}, transferSpecFlags()),
-		command("download", "Download a file or directory, or stream to stdout", "download [flags] TICKET REMOTE LOCAL|-", "metadata_or_bytes", "LOCAL=- writes complete raw file bytes without a summary and rejects JSON; optional progress uses stderr; stream mode excludes recursive/resume/preserve-times/dry-run/skip-existing", []string{"network", "optional_local_write"}, transferSpecFlags()),
+		command("upload", "Upload files, a directory or stdin without overwriting", "upload [flags] TICKET LOCAL|- REMOTE", "stream_or_metadata", "files-from selects relative files under source/destination roots; LOCAL=- reads payload stdin once; summary on stdout and optional progress on stderr; payload streams exclude recursive/resume/preserve-times/dry-run/skip-existing", []string{"optional_local_read", "optional_local_write", "network", "remote_write"}, transferSpecFlags()),
+		command("download", "Download files or a directory, or stream to stdout", "download [flags] TICKET REMOTE LOCAL|-", "metadata_or_bytes", "files-from selects relative files under source/destination roots; LOCAL=- writes raw payload bytes without a summary and rejects JSON; optional progress uses stderr; payload streams exclude recursive/resume/preserve-times/dry-run/skip-existing", []string{"network", "optional_local_read", "optional_local_write"}, transferSpecFlags()),
 		command("keygen", "Generate a private key directory", "keygen --out DIR [flags]", "metadata", "key paths and fingerprint", write, specFlags(jsonSpecFlag, []flagSpec{specFlag("out", "string", "", "New private output directory")})),
 		command("completion", "Print a static shell completion script", "completion bash|zsh|fish|powershell", "script", "completion script; never installs it", []string{}, []flagSpec{}),
 		command("version", "Show build metadata", "version [--json]", "metadata", "version text or build metadata", []string{}, jsonSpecFlag),
@@ -180,6 +180,13 @@ func buildCommandSpecs() []commandSpec {
 		}
 		terminalSpec.Subcommands = append(terminalSpec.Subcommands, command(action, "Managed PTY "+action, "terminal "+action+" --state FILE [flags]", "metadata_or_bytes", "terminal operation result", []string{"loopback_control"}, actual))
 	}
+	terminalSpec.Subcommands = append(terminalSpec.Subcommands, command("tail", "Read raw managed terminal output", "terminal tail --state FILE [flags]", "bytes", "raw bytes on stdout, dropped-byte diagnostics on stderr; reads up to 1 MiB once or follows until closure; cancellation stops only the reader; success does not describe the remote exit code", []string{"local_read", "loopback_control"}, []flagSpec{
+		specFlag("state", "string", "", "Private terminal state file"),
+		specFlag("cursor", "uint64", "0", "Absolute output byte offset"),
+		specFlag("follow", "bool", "false", "Continue reading until terminal output closes"),
+		specFlag("timeout", "duration", "30m0s", "Total reader lifetime; greater than zero and at most 24h"),
+		specFlag("json", "bool", "false", "Unsupported for raw terminal output; true returns an error"),
+	}))
 	commands = append(commands, terminalSpec)
 	commands = append(commands, command("capabilities", "Query actual remote platform capabilities", "capabilities TICKET [flags]", "metadata", "target capability response; not inferred from controller", []string{"network"}, specFlags(interfaceSpecFlag, retrySpecFlags, jsonSpecFlag, []flagSpec{specFlag("timeout", "duration", "20s", "Total capability query timeout")})))
 	for i := range commands {
@@ -193,10 +200,12 @@ func buildCommandSpecs() []commandSpec {
 func transferSpecFlags() []flagSpec {
 	return specFlags(interfaceSpecFlag, retrySpecFlags, jsonSpecFlag, []flagSpec{
 		specFlag("timeout", "duration", "5m0s", "Maximum transfer duration"),
-		specFlag("recursive", "bool", "false", "Transfer a tree; mutually exclusive with resume"),
+		specFlag("recursive", "bool", "false", "Transfer a tree; mutually exclusive with resume and files-from"),
 		specFlag("exclude", "string[]", "", "Relative slash glob or basename exclusion; no **"),
-		specFlag("max-files", "int", "10000", "Recursive file limit; 1..100000"),
-		specFlag("max-depth", "int", "32", "Recursive nesting limit; 0..128"),
+		specFlag("files-from", "string", "", "Local relative-file list under source root; - reads stdin; excludes recursive/exclude/resume/payload streams"),
+		specFlag("from0", "bool", "false", "Split files-from records on NUL instead of LF/CRLF; requires files-from"),
+		specFlag("max-files", "int", "10000", "Recursive or selected file limit; 1..100000"),
+		specFlag("max-depth", "int", "32", "Recursive or selected path nesting limit; 0..128"),
 		specFlag("resume", "bool", "false", "Resume one file using a private journal and owned partial"),
 		specFlag("resume-state", "string", "", "Private resume journal path; requires resume"),
 		specFlag("progress", "string", "", "jsonl emits progress events on stderr"),

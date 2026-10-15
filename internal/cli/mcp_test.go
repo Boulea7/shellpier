@@ -119,7 +119,7 @@ func TestMCPModernDiscoveryAndLegacyInitialization(t *testing.T) {
 	for _, item := range tools {
 		tool := item.(map[string]any)
 		name := tool["name"].(string)
-		for _, forbidden := range []string{"shellpier_share", "shellpier_host", "shellpier_relay", "shellpier_proxy", "shellpier_shell", "shellpier_mcp", "shellpier_service", "shellpier_target"} {
+		for _, forbidden := range []string{"shellpier_share", "shellpier_host", "shellpier_relay", "shellpier_proxy", "shellpier_shell", "shellpier_mcp", "shellpier_service", "shellpier_target", "shellpier_forward", "shellpier_terminal_tail"} {
 			if name == forbidden || strings.HasPrefix(name, forbidden+"_") {
 				t.Fatalf("unsafe tool exposed: %s", name)
 			}

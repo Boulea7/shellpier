@@ -21,14 +21,17 @@ Your AI Agent's computer:
   shellpier exec TICKET --command 'COMMAND' [--timeout 30s] [--json]
   shellpier shell TICKET
   shellpier terminal open TICKET --out NEW-DIRECTORY
+  shellpier terminal tail --state FILE [--follow]
   shellpier jobs start TICKET --command 'COMMAND' --operation-id ID
   shellpier forward TICKET --listen 127.0.0.1:0 --to HOST:PORT
   shellpier forward TICKET --dynamic --listen 1080
+  shellpier forward TICKET --local 8080=HOST:PORT --local 5432=DB:5432
   shellpier proxy TICKET --to HOST:PORT
   shellpier files list TICKET . [--json]
   shellpier ssh-config <access-ticket or @file> --out NEW-DIRECTORY
   shellpier upload <access-ticket or @file> LOCAL REMOTE
   shellpier download <access-ticket or @file> REMOTE LOCAL
+  shellpier upload TICKET LOCAL-ROOT REMOTE-ROOT --files-from LIST
   shellpier keygen --out NEW-DIRECTORY [--json]
   shellpier revoke <host-ticket or @file> [--timeout 10s]
 

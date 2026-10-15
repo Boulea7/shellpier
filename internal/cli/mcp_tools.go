@@ -161,8 +161,8 @@ func mcpMakeTool(path []string, spec commandSpec) (mcpTool, bool) {
 	}
 	description := spec.Summary + ". Usage: " + spec.Usage + ". Effects: " + strings.Join(effects, ", ") + ". Output: " + spec.Output + "."
 	if path[0] == "upload" || path[0] == "download" {
-		properties["positionals"].(map[string]any)["description"] = "Source and destination file paths, in CLI order. Local stdin/stdout marker '-' is unavailable over MCP."
-		description = "Transfer files using explicit source and destination paths. MCP reserves stdin/stdout for JSON-RPC; pipe transfers with '-' are unavailable. Effects: " + strings.Join(effects, ", ") + ". Output: bounded transfer summary."
+		properties["positionals"].(map[string]any)["description"] = "Source and destination paths, or roots with files-from, in CLI order. Local stdin/stdout marker '-' is unavailable over MCP."
+		description = "Transfer files using explicit source and destination paths; files-from may name a local list file. MCP reserves stdin/stdout for JSON-RPC; payload pipes and files-from '-' are unavailable. Effects: " + strings.Join(effects, ", ") + ". Output: bounded transfer summary."
 	}
 	if path[0] == "exec" || (path[0] == "jobs" && path[1] == "start") {
 		description += " A timeout or canceled response does not prove that execution or submission did not occur. Check state before retrying; never automatically replay."
@@ -235,7 +235,7 @@ func (t mcpTool) arguments(raw json.RawMessage) ([]string, error) {
 			if len(value) > 65536 || strings.ContainsRune(value, 0) {
 				return nil, errors.New("Tool option exceeds its input limit")
 			}
-			if key == "file" && value == "-" {
+			if (key == "file" || key == "files-from") && value == "-" {
 				return nil, errors.New("MCP tools cannot read from the protocol input stream")
 			}
 			args = append(args, "--"+key+"="+value)

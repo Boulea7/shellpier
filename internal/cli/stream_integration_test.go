@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -91,5 +92,74 @@ func TestMCPRejectsTransferStreamsBeforeDispatch(t *testing.T) {
 	case <-calls:
 		t.Fatal("a rejected pipe transfer was dispatched")
 	default:
+	}
+}
+
+func TestMCPRejectsStdinFileListsBeforeDispatch(t *testing.T) {
+	calls := make(chan struct{}, 1)
+	runner := func(context.Context, []string, io.Reader, io.Writer, io.Writer, string) error {
+		calls <- struct{}{}
+		return nil
+	}
+	c := startMCPTest(t, runner, mcpTestOptions())
+	for _, direction := range []string{"upload", "download"} {
+		c.send(t, mcpCallRequest(direction, "shellpier_"+direction, map[string]any{
+			"ticket": "@missing-file", "positionals": []string{"source", "destination"},
+			"options": map[string]any{"files-from": "-", "from0": true},
+		}))
+		result := mcpResultObject(t, c.read(t))
+		encoded, _ := json.Marshal(result)
+		if result["isError"] != true || !bytes.Contains(encoded, []byte("protocol input stream")) {
+			t.Fatalf("MCP stdin file list accepted: %s", encoded)
+		}
+	}
+	select {
+	case <-calls:
+		t.Fatal("a rejected stdin file list was dispatched")
+	default:
+	}
+	c.send(t, mcpModernRequest("after-rejection", "server/discover", nil))
+	if response := c.read(t); response["id"] != "after-rejection" || response["error"] != nil {
+		t.Fatalf("stdin file list consumed the protocol stream: %v", response)
+	}
+}
+
+func TestMCPNamedFileListRoundtrip(t *testing.T) {
+	dir, ticket := slowTransferEndpoint(t)
+	source := filepath.Join(dir, "source-list")
+	if err := os.MkdirAll(filepath.Join(source, "nested"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	data := []byte{0, 255, 1, '\r', '\n'}
+	if err := os.WriteFile(filepath.Join(source, "nested", "selected"), data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(source, "unselected"), data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	list := filepath.Join(dir, "selected-files")
+	if err := os.WriteFile(list, []byte("nested/selected\x00"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	remote := transferPath(filepath.Join(dir, "mcp-remote-list"))
+	destination := filepath.Join(dir, "mcp-downloaded-list")
+	c := startMCPTest(t, Run, mcpTestOptions())
+	for _, tc := range []struct {
+		direction, source, destination string
+	}{{"upload", source, remote}, {"download", remote, destination}} {
+		c.send(t, mcpCallRequest(tc.direction, "shellpier_"+tc.direction, map[string]any{
+			"ticket": "@" + ticket, "positionals": []string{tc.source, tc.destination},
+			"options": map[string]any{"files-from": list, "from0": true},
+		}))
+		if result := mcpResultObject(t, c.read(t)); result["isError"] != false {
+			t.Fatalf("MCP named list failed: %v", result)
+		}
+	}
+	got, err := os.ReadFile(filepath.Join(destination, "nested", "selected"))
+	if err != nil || !bytes.Equal(got, data) {
+		t.Fatalf("selected file changed: %q %v", got, err)
+	}
+	if _, err := os.Stat(filepath.Join(destination, "unselected")); !os.IsNotExist(err) {
+		t.Fatal("MCP list transferred an unselected file")
 	}
 }
