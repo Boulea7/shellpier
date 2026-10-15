@@ -161,6 +161,11 @@ func transferCopy(ctx context.Context, w io.Writer, r io.Reader, progress func(i
 		}
 		n, e := r.Read(buf)
 		if n > 0 {
+			if budget := transferSettings(ctx).budget; budget != nil {
+				if e := budget.wait(ctx, n); e != nil {
+					return total, e
+				}
+			}
 			written, we := w.Write(buf[:n])
 			total += int64(written)
 			if we != nil {

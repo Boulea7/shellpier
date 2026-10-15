@@ -199,6 +199,11 @@ func transferSpecFlags() []flagSpec {
 		specFlag("resume", "bool", "false", "Resume one file using a private journal and owned partial"),
 		specFlag("resume-state", "string", "", "Private resume journal path; requires resume"),
 		specFlag("progress", "string", "", "jsonl emits progress events on stderr"),
+		specFlag("dry-run", "bool", "false", "Read-only transfer plan; incompatible with resume"),
+		specFlag("verify", "bool", "false", "Compare source before and after copying with independently reread destination SHA-256"),
+		specFlag("preserve-times", "bool", "false", "Preserve new file and directory mtime in whole seconds"),
+		specFlag("skip-identical", "bool", "false", "Skip existing SHA-256-identical files; differing files fail; incompatible with resume"),
+		specFlag("bwlimit", "int64", "0", "Shared copy and verification bytes per second; zero is unlimited"),
 	})
 }
 func findCommandSpec(name string) (commandSpec, bool) {

@@ -31,6 +31,11 @@ func transferWithProgress(parent context.Context, command string, args []string,
 	resume := f.Bool("resume", false, "resume one file using an owned partial and private journal")
 	resumeState := f.String("resume-state", "", "private local resume manifest; default uses the user cache")
 	progressMode := f.String("progress", "", "jsonl emits progress events on stderr")
+	dryRun := f.Bool("dry-run", false, "read-only transfer plan; no destination or resume state is created")
+	verify := f.Bool("verify", false, "independently reread and compare source and destination SHA-256")
+	preserveTimes := f.Bool("preserve-times", false, "preserve new file/directory mtime at second precision; not ownership or permissions")
+	skipIdentical := f.Bool("skip-identical", false, "allow existing directories and skip equal files; reject different content")
+	bwlimit := f.Int64("bwlimit", 0, "operation-wide bytes/sec; 0 unlimited; includes hash and resume reads, excludes metadata")
 	var exclude transferExclusions
 	f.Var(&exclude, "exclude", "exclude a relative slash glob or basename; repeatable, no **")
 	if err := parseFlags(f, args); err != nil {
@@ -48,6 +53,12 @@ func transferWithProgress(parent context.Context, command string, args []string,
 	if *maxFiles < 1 || *maxFiles > 100000 || *maxDepth < 0 || *maxDepth > 128 || *recursive && (*resume || *resumeState != "") || *resumeState != "" && !*resume || *progressMode != "" && *progressMode != "jsonl" || len(exclude) > 0 && !*recursive {
 		return errors.New("invalid recursive/resume/progress options or capacity limits")
 	}
+	if *bwlimit < 0 {
+		return errors.New("bwlimit must be nonnegative integer bytes/sec")
+	}
+	if *resume && (*dryRun || *skipIdentical) {
+		return errors.New("resume cannot be combined with dry-run or skip-identical")
+	}
 	if err := retry.Validate(); err != nil {
 		return err
 	}
@@ -61,6 +72,11 @@ func transferWithProgress(parent context.Context, command string, args []string,
 	}
 	ctx, cancel := context.WithTimeout(parent, *timeout)
 	defer cancel()
+	options := transferOptions{dryRun: *dryRun, verify: *verify, preserveTimes: *preserveTimes, skipIdentical: *skipIdentical}
+	if *bwlimit > 0 {
+		options.budget = &transferBudget{rate: *bwlimit}
+	}
+	ctx = context.WithValue(ctx, transferOptionsKey{}, options)
 	client, err := access.DialRetry(ctx, ticket, *iface, retry.RetryOptions)
 	if err != nil {
 		return err
@@ -92,18 +108,36 @@ func transferWithProgress(parent context.Context, command string, args []string,
 	case *recursive:
 		result, err = runTransferTree(ctx, src, dst, positional[1], positional[2], exclude, *maxFiles, *maxDepth, progress)
 	case *resume:
+		var original os.FileInfo
+		original, err = src.lstat(positional[1])
+		if err != nil {
+			break
+		}
 		result, err = resumeTransfer(ctx, src, dst, positional[1], positional[2], *resumeState, command, ticket.HostKey, progress)
-	default:
-		copyCtx := context.WithValue(ctx, transferProgressKey{}, progress)
-		if command == "download" {
-			result.Bytes, err = downloadFile(copyCtx, sf, positional[1], positional[2])
-		} else {
-			result.Bytes, err = uploadFile(copyCtx, sf, positional[1], positional[2])
-		}
 		if err == nil {
-			result.SHA256, _, err = transferDigest(ctx, dst, positional[2])
-			result.Files = 1
+			result.Verified = *verify
+			if *verify {
+				_, err = verifyTransfer(ctx, src, dst, positional[1], positional[2], result.SHA256, original)
+				if err != nil {
+					break
+				}
+				result.VerifiedFiles = 1
+			}
+			if *preserveTimes {
+				now, e := src.lstat(positional[1])
+				if e != nil || !sameTransferSource(original, now) {
+					err = errors.New("source changed before mtime preservation")
+					break
+				}
+				err = preserveTransferTime(ctx, dst, positional[2], original)
+				if err == nil {
+					result.TimesPreserved = 1
+				}
+			}
 		}
+	default:
+		result, err = runSingleTransfer(ctx, src, dst, positional[1], positional[2], progress)
+
 	}
 	if err != nil {
 		return err
@@ -112,13 +146,16 @@ func transferWithProgress(parent context.Context, command string, args []string,
 		return err
 	}
 	result.Command = command
+	if *preserveTimes {
+		result.MtimePrecision = "seconds"
+	}
 	if result.Warnings == nil {
 		result.Warnings = []string{}
 	}
 	if *asJSON {
 		return json.NewEncoder(stdout).Encode(result)
 	}
-	_, err = fmt.Fprintf(stdout, "Transferred %d bytes in %d files and %d directories.\n", result.Bytes, result.Files, result.Directories)
+	_, err = fmt.Fprintf(stdout, "Transferred %d bytes in %d files and %d directories; skipped %d files; dry-run=%t.\n", result.Bytes, result.Files, result.Directories, result.SkippedFiles, result.DryRun)
 	for _, warning := range result.Warnings {
 		if _, e := fmt.Fprintln(stdout, "Warning:", warning); e != nil {
 			return e

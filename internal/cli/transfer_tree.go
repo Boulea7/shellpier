@@ -42,6 +42,9 @@ func (e transferExclusions) matches(rel, name string) bool {
 type transferTreeEntry struct {
 	relative  string
 	directory bool
+	original  os.FileInfo
+	action    string
+	hash      string
 }
 
 func planTransferTree(ctx context.Context, fs transferFS, root string, exclude transferExclusions, maxFiles, maxDepth int) ([]transferTreeEntry, error) {
@@ -52,7 +55,7 @@ func planTransferTree(ctx context.Context, fs transferFS, root string, exclude t
 	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
 		return nil, errors.New("recursive source must be a real directory")
 	}
-	plan := []transferTreeEntry{{directory: true}}
+	plan := []transferTreeEntry{{directory: true, original: info}}
 	files := 0
 	var walk func(string, int) error
 	walk = func(rel string, depth int) error {
@@ -87,7 +90,7 @@ func planTransferTree(ctx context.Context, fs transferFS, root string, exclude t
 			if len(plan) >= maxFiles+maxDepth+10000 {
 				return errors.New("recursive transfer entry capacity exceeded")
 			}
-			plan = append(plan, transferTreeEntry{child, entry.IsDir()})
+			plan = append(plan, transferTreeEntry{relative: child, directory: entry.IsDir(), original: entry})
 			if entry.IsDir() {
 				if e = walk(child, depth+1); e != nil {
 					return e
@@ -111,22 +114,129 @@ func runTransferTree(ctx context.Context, src, dst transferFS, source, destinati
 	if e != nil {
 		return result, e
 	}
-	if _, e = dst.lstat(destination); !os.IsNotExist(e) {
-		if e == nil {
-			return result, errors.New("destination already exists")
-		}
+	options := transferSettings(ctx)
+	if e = transferParentDirectory(dst, destination); e != nil {
 		return result, e
 	}
-	for _, entry := range plan {
+	// Resolve every conflict before writing anything. Execution must still recheck
+	// paths because a preview is not a filesystem lock or a snapshot.
+	for i := range plan {
+		item := &plan[i]
+		from, to := src.join(source, item.relative), dst.join(destination, item.relative)
+		current, e := src.lstat(from)
+		if e != nil {
+			return result, e
+		}
+		if item.directory {
+			if !current.IsDir() || current.Mode()&os.ModeSymlink != 0 {
+				return result, errors.New("source directory changed")
+			}
+		} else if !sameTransferSource(item.original, current) {
+			return result, errors.New("source changed during tree planning")
+		}
+		existing, e := dst.lstat(to)
+		if e != nil && !os.IsNotExist(e) {
+			return result, e
+		}
+		if item.directory {
+			item.action = "mkdir"
+			if e == nil {
+				if !options.skipIdentical || !existing.IsDir() || existing.Mode()&os.ModeSymlink != 0 {
+					return result, errors.New("destination already exists or is not a real directory")
+				}
+				item.action = "existing"
+			}
+			continue
+		}
+		item.action = "copy"
+		if e == nil {
+			if !options.skipIdentical {
+				return result, errors.New("destination already exists")
+			}
+			same, e := identicalTransfer(ctx, src, dst, from, to)
+			if e != nil {
+				return result, e
+			}
+			if same {
+				item.action = "skip"
+			}
+		}
+		if options.verify || item.action == "skip" {
+			snapshot, hash, e := transferSnapshot(ctx, src, from)
+			if e != nil {
+				return result, e
+			}
+			if !sameTransferSource(item.original, snapshot) {
+				return result, errors.New("source changed during planning")
+			}
+			item.hash = hash
+		}
+	}
+	if options.dryRun {
+		result.DryRun = true
+		for _, item := range plan {
+			kind := "file"
+			var size int64
+			if item.directory {
+				kind = "directory"
+			} else {
+				size = item.original.Size()
+			}
+			result.Plan = append(result.Plan, transferPlanItem{Path: item.relative, Kind: kind, Action: item.action, Bytes: size})
+			if item.action == "copy" {
+				result.PlannedBytes += size
+			}
+			if item.action == "skip" {
+				result.SkippedFiles++
+			}
+		}
+		return result, nil
+	}
+	for _, item := range plan {
 		if e = ctx.Err(); e != nil {
 			return result, e
 		}
-		from, to := src.join(source, entry.relative), dst.join(destination, entry.relative)
-		if entry.directory {
-			if e = dst.mkdir(to); e != nil {
+		from, to := src.join(source, item.relative), dst.join(destination, item.relative)
+		if item.directory {
+			if item.action == "mkdir" {
+				if e = dst.mkdir(to); e != nil {
+					return result, e
+				}
+				result.Directories++
+			} else {
+				existing, e := dst.lstat(to)
+				if e != nil || !existing.IsDir() || existing.Mode()&os.ModeSymlink != 0 {
+					return result, errors.New("existing destination directory changed")
+				}
+			}
+			continue
+		}
+		now, e := src.lstat(from)
+		if e != nil {
+			return result, e
+		}
+		if !sameTransferSource(item.original, now) {
+			return result, errors.New("source changed after planning")
+		}
+		if item.action == "skip" {
+			same, e := identicalTransfer(ctx, src, dst, from, to)
+			if e != nil {
 				return result, e
 			}
-			result.Directories++
+			if !same {
+				return result, errors.New("previously identical destination disappeared")
+			}
+			_, hash, e := transferSnapshot(ctx, src, from)
+			if e != nil {
+				return result, e
+			}
+			if hash != item.hash {
+				return result, errors.New("skipped source changed after planning")
+			}
+			result.SkippedFiles++
+			if options.verify {
+				result.VerifiedFiles++
+			}
 			continue
 		}
 		var count int64
@@ -140,11 +250,39 @@ func runTransferTree(ctx context.Context, src, dst transferFS, source, destinati
 		}
 		result.Bytes += count
 		result.Files++
+		if options.verify {
+			if _, e = verifyTransfer(ctx, src, dst, from, to, item.hash, item.original); e != nil {
+				return result, e
+			}
+			result.VerifiedFiles++
+		}
+		if options.preserveTimes {
+			now, e := src.lstat(from)
+			if e != nil || !sameTransferSource(item.original, now) {
+				return result, errors.New("source changed before mtime preservation")
+			}
+			if e = preserveTransferTime(ctx, dst, to, item.original); e != nil {
+				return result, e
+			}
+			result.TimesPreserved++
+		}
 		if progress != nil {
 			if e = progress(result.Bytes); e != nil {
 				return result, e
 			}
 		}
 	}
+	if options.preserveTimes {
+		for i := len(plan) - 1; i >= 0; i-- {
+			item := plan[i]
+			if item.directory && item.action == "mkdir" {
+				if e = preserveTransferTime(ctx, dst, dst.join(destination, item.relative), item.original); e != nil {
+					return result, e
+				}
+				result.TimesPreserved++
+			}
+		}
+	}
+	result.Verified = options.verify
 	return result, nil
 }
