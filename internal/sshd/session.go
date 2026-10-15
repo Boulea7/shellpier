@@ -24,24 +24,30 @@ const (
 )
 
 type capabilities struct {
-	Protocol     int      `json:"protocol"`
-	OS           string   `json:"os"`
-	Arch         string   `json:"arch"`
-	Shell        string   `json:"shell"`
-	PTY          bool     `json:"pty"`
-	SFTP         bool     `json:"sftp"`
-	Exec         bool     `json:"exec"`
-	Env          bool     `json:"env"`
-	CWD          bool     `json:"cwd"`
-	ExecSignal   bool     `json:"exec_signal"`
-	PTYSignals   []string `json:"pty_signals"`
-	Jobs         bool     `json:"jobs"`
-	JobsProtocol int      `json:"jobs_protocol,omitempty"`
-	Forward      bool     `json:"forward"`
+	AccessMode   AccessMode `json:"access_mode"`
+	SFTPReadOnly bool       `json:"sftp_read_only"`
+	Protocol     int        `json:"protocol"`
+	OS           string     `json:"os"`
+	Arch         string     `json:"arch"`
+	Shell        string     `json:"shell"`
+	PTY          bool       `json:"pty"`
+	SFTP         bool       `json:"sftp"`
+	Exec         bool       `json:"exec"`
+	Env          bool       `json:"env"`
+	CWD          bool       `json:"cwd"`
+	ExecSignal   bool       `json:"exec_signal"`
+	PTYSignals   []string   `json:"pty_signals"`
+	Jobs         bool       `json:"jobs"`
+	JobsProtocol int        `json:"jobs_protocol,omitempty"`
+	Forward      bool       `json:"forward"`
 }
 
 func (s *Server) globalRequests(requests <-chan *ssh.Request) {
 	for request := range requests {
+		if request.Type == JobsRequest && !s.fullAccess() {
+			request.Reply(false, nil)
+			continue
+		}
 		if HandleJobsRequest(s.Jobs, request) {
 			continue
 		}
@@ -54,6 +60,12 @@ func (s *Server) globalRequests(requests <-chan *ssh.Request) {
 			shell = "auto"
 		}
 		result := capabilities{Protocol: 1, OS: runtime.GOOS, Arch: runtime.GOARCH, Shell: shell, PTY: platform.TerminalSupported(), SFTP: true, Exec: true, Env: true, CWD: true, PTYSignals: platform.TerminalSignals(), Jobs: s.Jobs != nil, Forward: s.Forward != nil}
+		result.AccessMode = s.accessMode()
+		result.SFTPReadOnly = s.AccessMode == AccessSFTPReadOnly
+		if !s.fullAccess() {
+			result.PTY, result.Exec, result.Env, result.CWD, result.Jobs, result.Forward = false, false, false, false, false, false
+			result.PTYSignals = nil
+		}
 		if result.Jobs {
 			result.JobsProtocol = 1
 		}
@@ -98,6 +110,10 @@ func (s *Server) session(parent context.Context, ch ssh.Channel, requests <-chan
 			}
 			accepted := false
 			if len(request.Payload) > MaxRequestBytes {
+				request.Reply(false, nil)
+				continue
+			}
+			if !s.fullAccess() && request.Type != "subsystem" {
 				request.Reply(false, nil)
 				continue
 			}
@@ -196,7 +212,13 @@ func (s *Server) session(parent context.Context, ch ssh.Channel, requests <-chan
 				var value struct{ Name string }
 				if !started && !ptyRequested && ssh.Unmarshal(request.Payload, &value) == nil && value.Name == "sftp" {
 					var err error
-					subsystem, err = sftp.NewServer(ch, sftp.WithServerWorkingDirectory(options.WorkDir))
+					serverOptions := []sftp.ServerOption{sftp.WithServerWorkingDirectory(options.WorkDir)}
+					var transport io.ReadWriteCloser = ch
+					if s.AccessMode == AccessSFTPReadOnly {
+						transport = &readOnlySFTPChannel{Channel: ch}
+						serverOptions = append(serverOptions, sftp.ReadOnly())
+					}
+					subsystem, err = sftp.NewServer(transport, serverOptions...)
 					if err == nil {
 						started = true
 						accepted = true

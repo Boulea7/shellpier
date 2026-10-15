@@ -23,6 +23,7 @@ const MaxSessions = 8
 const DefaultHandshakeTimeout = 10 * time.Second
 
 type Server struct {
+	AccessMode       AccessMode
 	Signer           ssh.Signer
 	AuthorizedKey    ssh.PublicKey
 	Shell            string
@@ -33,6 +34,10 @@ type Server struct {
 }
 
 func (s *Server) ServeConn(ctx context.Context, conn net.Conn) error {
+	if _, err := ParseAccessMode(string(s.AccessMode)); err != nil {
+		conn.Close()
+		return err
+	}
 	if s.Signer == nil || s.AuthorizedKey == nil {
 		return fmt.Errorf("host signer and authorized key are required")
 	}
@@ -80,6 +85,10 @@ func (s *Server) ServeConn(ctx context.Context, conn net.Conn) error {
 	for nc := range chans {
 		if nc.ChannelType() != "session" && nc.ChannelType() != "direct-tcpip" {
 			nc.Reject(ssh.UnknownChannelType, "unsupported SSH channel")
+			continue
+		}
+		if nc.ChannelType() == "direct-tcpip" && !s.fullAccess() {
+			nc.Reject(ssh.Prohibited, "forwarding disabled by access mode")
 			continue
 		}
 		select {
