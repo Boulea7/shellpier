@@ -44,7 +44,6 @@ type transferTreeEntry struct {
 	directory bool
 	original  os.FileInfo
 	action    string
-	hash      string
 }
 
 func planTransferTree(ctx context.Context, fs transferFS, root string, exclude transferExclusions, maxFiles, maxDepth int) ([]transferTreeEntry, error) {
@@ -141,7 +140,7 @@ func runTransferTree(ctx context.Context, src, dst transferFS, source, destinati
 		if item.directory {
 			item.action = "mkdir"
 			if e == nil {
-				if !options.skipIdentical || !existing.IsDir() || existing.Mode()&os.ModeSymlink != 0 {
+				if !options.skipExisting || !existing.IsDir() || existing.Mode()&os.ModeSymlink != 0 {
 					return result, errors.New("destination already exists or is not a real directory")
 				}
 				item.action = "existing"
@@ -150,26 +149,16 @@ func runTransferTree(ctx context.Context, src, dst transferFS, source, destinati
 		}
 		item.action = "copy"
 		if e == nil {
-			if !options.skipIdentical {
+			if !options.skipExisting {
 				return result, errors.New("destination already exists")
 			}
-			same, e := identicalTransfer(ctx, src, dst, from, to)
+			same, e := existingTransfer(dst, to)
 			if e != nil {
 				return result, e
 			}
 			if same {
 				item.action = "skip"
 			}
-		}
-		if options.verify || item.action == "skip" {
-			snapshot, hash, e := transferSnapshot(ctx, src, from)
-			if e != nil {
-				return result, e
-			}
-			if !sameTransferSource(item.original, snapshot) {
-				return result, errors.New("source changed during planning")
-			}
-			item.hash = hash
 		}
 	}
 	if options.dryRun {
@@ -219,24 +208,14 @@ func runTransferTree(ctx context.Context, src, dst transferFS, source, destinati
 			return result, errors.New("source changed after planning")
 		}
 		if item.action == "skip" {
-			same, e := identicalTransfer(ctx, src, dst, from, to)
+			same, e := existingTransfer(dst, to)
 			if e != nil {
 				return result, e
 			}
 			if !same {
-				return result, errors.New("previously identical destination disappeared")
-			}
-			_, hash, e := transferSnapshot(ctx, src, from)
-			if e != nil {
-				return result, e
-			}
-			if hash != item.hash {
-				return result, errors.New("skipped source changed after planning")
+				return result, errors.New("existing destination disappeared")
 			}
 			result.SkippedFiles++
-			if options.verify {
-				result.VerifiedFiles++
-			}
 			continue
 		}
 		var count int64
@@ -250,12 +229,6 @@ func runTransferTree(ctx context.Context, src, dst transferFS, source, destinati
 		}
 		result.Bytes += count
 		result.Files++
-		if options.verify {
-			if _, e = verifyTransfer(ctx, src, dst, from, to, item.hash, item.original); e != nil {
-				return result, e
-			}
-			result.VerifiedFiles++
-		}
 		if options.preserveTimes {
 			now, e := src.lstat(from)
 			if e != nil || !sameTransferSource(item.original, now) {
@@ -283,6 +256,5 @@ func runTransferTree(ctx context.Context, src, dst transferFS, source, destinati
 			}
 		}
 	}
-	result.Verified = options.verify
 	return result, nil
 }

@@ -3,15 +3,14 @@ package cli
 import (
 	"context"
 	"errors"
-	"fmt"
 	"os"
 	"sync"
 	"time"
 )
 
 type transferOptions struct {
-	dryRun, verify, preserveTimes, skipIdentical bool
-	budget                                       *transferBudget
+	dryRun, preserveTimes, skipExisting bool
+	budget                              *transferBudget
 }
 type transferOptionsKey struct{}
 
@@ -59,44 +58,6 @@ type transferPlanItem struct {
 	Bytes  int64  `json:"bytes"`
 }
 
-func transferSnapshot(ctx context.Context, fs transferFS, p string) (os.FileInfo, string, error) {
-	before, e := fs.lstat(p)
-	if e != nil {
-		return nil, "", e
-	}
-	if !before.Mode().IsRegular() {
-		return nil, "", errors.New("source must be a regular file, not a symlink")
-	}
-	hash, _, e := transferDigest(ctx, fs, p)
-	if e != nil {
-		return nil, "", e
-	}
-	after, e := fs.lstat(p)
-	if e != nil {
-		return nil, "", e
-	}
-	if !sameTransferSource(before, after) {
-		return nil, "", errors.New("source changed during verification snapshot")
-	}
-	return before, hash, nil
-}
-func verifyTransfer(ctx context.Context, src, dst transferFS, source, destination, expected string, before os.FileInfo) (string, error) {
-	now, sourceHash, e := transferSnapshot(ctx, src, source)
-	if e != nil {
-		return "", e
-	}
-	if sourceHash != expected || !sameTransferSource(before, now) {
-		return "", errors.New("source changed during transfer")
-	}
-	targetHash, n, e := transferDigest(ctx, dst, destination)
-	if e != nil {
-		return "", e
-	}
-	if targetHash != expected || n != before.Size() {
-		return "", errors.New("source and independently reread destination SHA-256 differ")
-	}
-	return targetHash, nil
-}
 func preserveTransferTime(ctx context.Context, fs transferFS, p string, original os.FileInfo) error {
 	if e := ctx.Err(); e != nil {
 		return e
@@ -115,7 +76,7 @@ func preserveTransferTime(ctx context.Context, fs transferFS, p string, original
 	}
 	return os.Chtimes(p, modified, modified)
 }
-func identicalTransfer(ctx context.Context, src, dst transferFS, source, destination string) (bool, error) {
+func existingTransfer(dst transferFS, destination string) (bool, error) {
 	info, e := dst.lstat(destination)
 	if os.IsNotExist(e) {
 		return false, nil
@@ -125,24 +86,6 @@ func identicalTransfer(ctx context.Context, src, dst transferFS, source, destina
 	}
 	if !info.Mode().IsRegular() {
 		return false, errors.New("existing destination is not a regular file")
-	}
-	before, hash, e := transferSnapshot(ctx, src, source)
-	if e != nil {
-		return false, e
-	}
-	targetHash, n, e := transferDigest(ctx, dst, destination)
-	if e != nil {
-		return false, e
-	}
-	if n != before.Size() || hash != targetHash {
-		return false, fmt.Errorf("existing destination differs; refusing to overwrite: %s", destination)
-	}
-	after, sourceHash, e := transferSnapshot(ctx, src, source)
-	if e != nil {
-		return false, e
-	}
-	if sourceHash != hash || !sameTransferSource(before, after) {
-		return false, errors.New("source changed during identical-file comparison")
 	}
 	return true, nil
 }
@@ -170,8 +113,8 @@ func runSingleTransfer(ctx context.Context, src, dst transferFS, source, destina
 		return result, e
 	}
 	action := "copy"
-	if options.skipIdentical {
-		same, e := identicalTransfer(ctx, src, dst, source, destination)
+	if options.skipExisting {
+		same, e := existingTransfer(dst, destination)
 		if e != nil {
 			return result, e
 		}
@@ -197,18 +140,7 @@ func runSingleTransfer(ctx context.Context, src, dst transferFS, source, destina
 	}
 	if action == "skip" {
 		result.SkippedFiles = 1
-		result.Verified = options.verify
-		if options.verify {
-			result.VerifiedFiles = 1
-		}
 		return result, nil
-	}
-	expected := ""
-	if options.verify {
-		info, expected, e = transferSnapshot(ctx, src, source)
-		if e != nil {
-			return result, e
-		}
 	}
 	copyCtx := context.WithValue(ctx, transferProgressKey{}, progress)
 	if src.remote == nil {
@@ -220,18 +152,6 @@ func runSingleTransfer(ctx context.Context, src, dst transferFS, source, destina
 		return result, e
 	}
 	result.Files = 1
-	if options.verify {
-		result.SHA256, e = verifyTransfer(ctx, src, dst, source, destination, expected, info)
-		if e == nil {
-			result.Verified = true
-			result.VerifiedFiles = 1
-		}
-	} else {
-		result.SHA256, _, e = transferDigest(ctx, dst, destination)
-	}
-	if e != nil {
-		return result, e
-	}
 	if options.preserveTimes {
 		now, e := src.lstat(source)
 		if e != nil {

@@ -19,7 +19,6 @@ import (
 type transferSummary struct {
 	Command        string             `json:"command"`
 	Bytes          int64              `json:"bytes"`
-	SHA256         string             `json:"sha256,omitempty"`
 	Files          int                `json:"files"`
 	Directories    int                `json:"directories"`
 	Warnings       []string           `json:"warnings"`
@@ -27,8 +26,6 @@ type transferSummary struct {
 	PlannedBytes   int64              `json:"planned_bytes,omitempty"`
 	Plan           []transferPlanItem `json:"plan,omitempty"`
 	SkippedFiles   int                `json:"skipped_files"`
-	Verified       bool               `json:"verified"`
-	VerifiedFiles  int                `json:"verified_files"`
 	TimesPreserved int                `json:"times_preserved"`
 	MtimePrecision string             `json:"mtime_precision,omitempty"`
 }
@@ -284,6 +281,5 @@ func resumeTransfer(ctx context.Context, src, dst transferFS, source, destinatio
 	removeOwnedManifest(state, stateInfo)
 	result.Bytes = size
 	result.Files = 1
-	result.SHA256 = digest
 	return result, nil
 }

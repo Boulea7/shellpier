@@ -3,8 +3,6 @@ package cli
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"io"
 	"os"
@@ -129,8 +127,7 @@ func TestTransferResumeRealSFTP(t *testing.T) {
 			if e != nil {
 				t.Fatal(e)
 			}
-			sum := sha256.Sum256(content)
-			if result.SHA256 != hex.EncodeToString(sum[:]) || result.Bytes != int64(len(content)) {
+			if result.Bytes != int64(len(content)) {
 				t.Fatal(result)
 			}
 			got, e := os.ReadFile(destination)
@@ -139,17 +136,6 @@ func TestTransferResumeRealSFTP(t *testing.T) {
 			}
 			if _, e = os.Lstat(state); !os.IsNotExist(e) {
 				t.Fatal("completed state retained")
-			}
-			out, e := runFiles(t, "checksum", "--json", "@"+ticket, transferPath(destination))
-			if e != nil {
-				t.Fatal(e)
-			}
-			var checksum struct {
-				SHA256 string `json:"sha256"`
-				Bytes  int64  `json:"bytes"`
-			}
-			if e = json.Unmarshal([]byte(out), &checksum); e != nil || checksum.SHA256 != result.SHA256 || checksum.Bytes != result.Bytes {
-				t.Fatalf("checksum %s %v", out, e)
 			}
 		})
 	}

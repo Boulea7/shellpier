@@ -36,12 +36,12 @@ func filesInfo(p string, info os.FileInfo) filesMetadata {
 func files(parent context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer) (result error) {
 	_ = stdin
 	if len(args) == 0 || args[0] == "--help" || args[0] == "-h" {
-		_, err := fmt.Fprintln(stdout, "Usage: shellpier files list|stat|read|checksum|mkdir|rename|remove [flags] TICKET PATH [DEST]\nMetadata supports --json. read prints raw bytes or base64 JSON.\nMutations support --dry-run. mkdir supports --parents. rename refuses existing targets; its existence check is not atomic on SFTP v3. remove never recurses.")
+		_, err := fmt.Fprintln(stdout, "Usage: shellpier files list|stat|read|mkdir|rename|remove [flags] TICKET PATH [DEST]\nMetadata supports --json. read prints raw bytes or base64 JSON.\nMutations support --dry-run. mkdir supports --parents. rename refuses existing targets; its existence check is not atomic on SFTP v3. remove never recurses.")
 		return err
 	}
 	action := args[0]
 	switch action {
-	case "list", "stat", "read", "checksum", "mkdir", "rename", "remove":
+	case "list", "stat", "read", "mkdir", "rename", "remove":
 	default:
 		return fmt.Errorf("unknown files action %q", action)
 	}
@@ -129,21 +129,6 @@ func files(parent context.Context, args []string, stdin io.Reader, stdout, stder
 	defer sf.Close()
 	p := f.Arg(1)
 	switch action {
-	case "checksum":
-		digest, n, e := transferDigest(ctx, transferFS{remote: sf}, p)
-		if e != nil {
-			return e
-		}
-		if *asJSON {
-			return json.NewEncoder(stdout).Encode(struct {
-				Path      string `json:"path"`
-				Algorithm string `json:"algorithm"`
-				SHA256    string `json:"sha256"`
-				Bytes     int64  `json:"bytes"`
-			}{p, "sha256", digest, n})
-		}
-		_, e = fmt.Fprintf(stdout, "%s  %s\n", digest, p)
-		return e
 	case "stat":
 		info, err := sf.Lstat(p)
 		if err != nil {
@@ -198,7 +183,7 @@ func filesOutput(out io.Writer, asJSON bool, value filesMetadata) error {
 }
 
 func filesRead(sf *sftp.Client, p string, offset, limit int64, asJSON bool, out io.Writer) error {
-	info, err := sf.Lstat(p)
+	info, err := sf.Stat(p)
 	if err != nil {
 		return err
 	}

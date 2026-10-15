@@ -169,8 +169,8 @@ func TestFilesRealSFTP(t *testing.T) {
 		if err != nil || !strings.Contains(out, `"symlink":true`) {
 			t.Fatalf("symlink stat: %s %v", out, err)
 		}
-		if _, err = runFiles(t, "read", input, transferPath(link)); err == nil {
-			t.Fatal("read followed symlink")
+		if out, err = runFiles(t, "read", input, transferPath(link)); err != nil || out != "original" {
+			t.Fatalf("read through symlink: %q %v", out, err)
 		}
 		if _, err = runFiles(t, "remove", input, transferPath(link)); err != nil {
 			t.Fatal(err)

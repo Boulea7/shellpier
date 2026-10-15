@@ -72,7 +72,7 @@ func mcpMakeTool(path []string, spec commandSpec) (mcpTool, bool) {
 		ticket = true
 		min, max = 1, 1
 		switch path[1] {
-		case "list", "stat", "read", "checksum":
+		case "list", "stat", "read":
 			readOnly = true
 		case "write", "rename":
 			min, max = 2, 2

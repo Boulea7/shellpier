@@ -32,9 +32,8 @@ func transferWithProgress(parent context.Context, command string, args []string,
 	resumeState := f.String("resume-state", "", "private local resume manifest; default uses the user cache")
 	progressMode := f.String("progress", "", "jsonl emits progress events on stderr")
 	dryRun := f.Bool("dry-run", false, "read-only transfer plan; no destination or resume state is created")
-	verify := f.Bool("verify", false, "independently reread and compare source and destination SHA-256")
 	preserveTimes := f.Bool("preserve-times", false, "preserve new file/directory mtime at second precision; not ownership or permissions")
-	skipIdentical := f.Bool("skip-identical", false, "allow existing directories and skip equal files; reject different content")
+	skipExisting := f.Bool("skip-existing", false, "allow existing directories and skip existing regular files without comparing content")
 	bwlimit := f.Int64("bwlimit", 0, "operation-wide bytes/sec; 0 unlimited; includes hash and resume reads, excludes metadata")
 	var exclude transferExclusions
 	f.Var(&exclude, "exclude", "exclude a relative slash glob or basename; repeatable, no **")
@@ -56,8 +55,8 @@ func transferWithProgress(parent context.Context, command string, args []string,
 	if *bwlimit < 0 {
 		return errors.New("bwlimit must be nonnegative integer bytes/sec")
 	}
-	if *resume && (*dryRun || *skipIdentical) {
-		return errors.New("resume cannot be combined with dry-run or skip-identical")
+	if *resume && (*dryRun || *skipExisting) {
+		return errors.New("resume cannot be combined with dry-run or skip-existing")
 	}
 	if err := retry.Validate(); err != nil {
 		return err
@@ -72,7 +71,7 @@ func transferWithProgress(parent context.Context, command string, args []string,
 	}
 	ctx, cancel := context.WithTimeout(parent, *timeout)
 	defer cancel()
-	options := transferOptions{dryRun: *dryRun, verify: *verify, preserveTimes: *preserveTimes, skipIdentical: *skipIdentical}
+	options := transferOptions{dryRun: *dryRun, preserveTimes: *preserveTimes, skipExisting: *skipExisting}
 	if *bwlimit > 0 {
 		options.budget = &transferBudget{rate: *bwlimit}
 	}
@@ -115,14 +114,6 @@ func transferWithProgress(parent context.Context, command string, args []string,
 		}
 		result, err = resumeTransfer(ctx, src, dst, positional[1], positional[2], *resumeState, command, ticket.HostKey, progress)
 		if err == nil {
-			result.Verified = *verify
-			if *verify {
-				_, err = verifyTransfer(ctx, src, dst, positional[1], positional[2], result.SHA256, original)
-				if err != nil {
-					break
-				}
-				result.VerifiedFiles = 1
-			}
 			if *preserveTimes {
 				now, e := src.lstat(positional[1])
 				if e != nil || !sameTransferSource(original, now) {

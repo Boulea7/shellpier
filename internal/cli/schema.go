@@ -98,8 +98,8 @@ func buildCommandSpecs() []commandSpec {
 		command("relay", "Run an authenticated WebSocket relay", "relay [flags]", "foreground", "listener metadata", []string{"listener", "optional_local_write"}, []flagSpec{specFlag("listen", "string", "127.0.0.1:8080", "Listener bind address"), specFlag("token-file", "string", "", "Enrollment key file"), specFlag("init-key", "string", "", "Create a private key and exit"), specFlag("max-sessions", "int", "64", "Session capacity"), specFlag("max-ttl", "duration", "24h0m0s", "Maximum nonpersistent lifetime"), specFlag("allow-persistent", "bool", "false", "Explicitly permit TTL zero"), specFlag("tls-cert", "string", "", "Native HTTPS PEM certificate"), specFlag("tls-key", "string", "", "Native HTTPS PEM key")}),
 		command("inspect", "Inspect a ticket without connecting", "inspect TICKET [flags]", "metadata", "credential-free ticket summary", local, jsonSpecFlag),
 		command("check", "Verify remote host and account", "check TICKET [flags]", "metadata", "identity and pinned key result", remote, specFlags(interfaceSpecFlag, retrySpecFlags, jsonSpecFlag, []flagSpec{specFlag("timeout", "duration", "20s", "Total identity check timeout")})),
-		command("upload", "Upload a file or directory without overwriting", "upload [flags] TICKET LOCAL REMOTE", "metadata", "byte/file/directory counts, single-file SHA-256 and warnings; optional stderr progress", []string{"local_read", "optional_local_write", "network", "remote_write"}, transferSpecFlags()),
-		command("download", "Download a file or directory without overwriting", "download [flags] TICKET REMOTE LOCAL", "metadata", "byte/file/directory counts, single-file SHA-256 and warnings; optional stderr progress", []string{"network", "local_write"}, transferSpecFlags()),
+		command("upload", "Upload a file or directory without overwriting", "upload [flags] TICKET LOCAL REMOTE", "metadata", "byte/file/directory counts and warnings; optional stderr progress", []string{"local_read", "optional_local_write", "network", "remote_write"}, transferSpecFlags()),
+		command("download", "Download a file or directory without overwriting", "download [flags] TICKET REMOTE LOCAL", "metadata", "byte/file/directory counts and warnings; optional stderr progress", []string{"network", "local_write"}, transferSpecFlags()),
 		command("keygen", "Generate a private key directory", "keygen --out DIR [flags]", "metadata", "key paths and fingerprint", write, specFlags(jsonSpecFlag, []flagSpec{specFlag("out", "string", "", "New private output directory")})),
 		command("completion", "Print a static shell completion script", "completion bash|zsh|fish|powershell", "script", "completion script; never installs it", []string{}, []flagSpec{}),
 		command("version", "Show build metadata", "version [--json]", "metadata", "version text or build metadata", []string{}, jsonSpecFlag),
@@ -109,7 +109,7 @@ func buildCommandSpecs() []commandSpec {
 	}
 	fileBase := specFlags(interfaceSpecFlag, retrySpecFlags, jsonSpecFlag, []flagSpec{specFlag("timeout", "duration", "5m0s", "Total file operation timeout")})
 	files := command("files", "Operate on remote paths with SFTP", "files ACTION [flags] TICKET PATH [DEST]", "metadata_or_bytes", "metadata or raw bytes; JSON read uses base64", []string{"network", "optional_remote_write"}, []flagSpec{})
-	for _, action := range []string{"list", "stat", "read", "checksum", "mkdir", "rename", "remove"} {
+	for _, action := range []string{"list", "stat", "read", "mkdir", "rename", "remove"} {
 		ff := specFlags(fileBase)
 		effect := []string{"network", "remote_read"}
 		if action == "list" {
@@ -200,10 +200,9 @@ func transferSpecFlags() []flagSpec {
 		specFlag("resume-state", "string", "", "Private resume journal path; requires resume"),
 		specFlag("progress", "string", "", "jsonl emits progress events on stderr"),
 		specFlag("dry-run", "bool", "false", "Read-only transfer plan; incompatible with resume"),
-		specFlag("verify", "bool", "false", "Compare source before and after copying with independently reread destination SHA-256"),
 		specFlag("preserve-times", "bool", "false", "Preserve new file and directory mtime in whole seconds"),
-		specFlag("skip-identical", "bool", "false", "Skip existing SHA-256-identical files; differing files fail; incompatible with resume"),
-		specFlag("bwlimit", "int64", "0", "Shared copy and verification bytes per second; zero is unlimited"),
+		specFlag("skip-existing", "bool", "false", "Skip existing files without comparing their contents; incompatible with resume"),
+		specFlag("bwlimit", "int64", "0", "Shared transfer bytes per second; zero is unlimited"),
 	})
 }
 func findCommandSpec(name string) (commandSpec, bool) {
