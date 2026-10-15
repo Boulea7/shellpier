@@ -449,7 +449,7 @@ func TestTerminalRealBinaryFastOpenAndSnapshot(t *testing.T) {
 	for i := 0; i < 10; i++ {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		dir := filepath.Join(t.TempDir(), "terminal")
-		command := exec.CommandContext(ctx, binary, "terminal", "open", encoded, "--out", dir, "--command", "true", "--json")
+		command := exec.CommandContext(ctx, binary, "terminal", "open", encoded, "--out", dir, "--command", "true", "--log-limit", "64", "--json")
 		data, err := command.CombinedOutput()
 		cancel()
 		if err != nil {
@@ -465,6 +465,13 @@ func TestTerminalRealBinaryFastOpenAndSnapshot(t *testing.T) {
 			if e == nil {
 				if !snapshot.Closed || snapshot.ExitCode == nil || *snapshot.ExitCode != 0 || string(snapshot.Data) != "finished\n" {
 					t.Fatalf("fast command output invalid: %#v", snapshot)
+				}
+				if snapshot.Log == nil || snapshot.Log.BytesWritten != 9 || !snapshot.Log.Complete {
+					t.Fatalf("final log state missing: %#v", snapshot.Log)
+				}
+				logData, logErr := os.ReadFile(filepath.Join(dir, "output.log"))
+				if logErr != nil || string(logData) != "finished\n" {
+					t.Fatalf("bounded output log %q %v", logData, logErr)
 				}
 				break
 			}

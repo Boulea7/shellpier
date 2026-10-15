@@ -162,6 +162,14 @@ func terminalServeEntry(parent context.Context, args []string, stdin io.Reader, 
 	setupTimer := time.AfterFunc(30*time.Second, cancel)
 	defer setupTimer.Stop()
 	ring := newTerminalRing()
+	if config.LogLimit != 0 {
+		log, err := newTerminalLog(filepath.Dir(absolute), config.LogLimit)
+		if err != nil {
+			return err
+		}
+		ring.log = log
+		defer log.stop()
+	}
 	peer, err := terminalSSHConnect(ctx, state, config, ring)
 	if err != nil {
 		return errors.New("terminal SSH setup failed; no remote operation was replayed")
@@ -221,6 +229,7 @@ type terminalRuntime struct {
 	once       sync.Once
 	mu         sync.Mutex
 	persistErr error
+	operations map[string]*terminalOperationEntry
 }
 
 func newTerminalRuntime(ctx context.Context, state terminalState, path string, peer terminalPeer, ring *terminalRing) *terminalRuntime {
@@ -236,18 +245,32 @@ func newTerminalRuntime(ctx context.Context, state terminalState, path string, p
 			}
 		}
 		close(r.waitDone)
-		r.end(code)
+		reason, known := executionOutcome(err)
+		if !known && ctx.Err() != nil {
+			reason, known = executionOutcome(ctx.Err())
+		}
+		r.endOutcome(code, reason, known)
 	}()
 	return r
 }
 func (r *terminalRuntime) end(code int) {
+	reason := "canceled"
+	if errors.Is(r.ctx.Err(), context.DeadlineExceeded) {
+		reason = "expired"
+	}
+	r.endOutcome(code, reason, false)
+}
+func (r *terminalRuntime) endOutcome(code int, reason string, known bool) {
 	r.once.Do(func() {
 		r.peer.Close()
 		select {
 		case <-r.waitDone:
 		case <-time.After(2 * time.Second):
 		}
-		r.ring.finish(code)
+		r.ring.finishOutcome(code, reason, known)
+		if r.ring.log != nil {
+			r.ring.log.stop()
+		}
 		r.mu.Lock()
 		snapshot := r.ring.snapshot()
 		snapshot.SessionID = r.state.ID
@@ -282,13 +305,14 @@ func (r *terminalRuntime) ServeHTTP(w http.ResponseWriter, request *http.Request
 		return
 	}
 	var body struct {
-		Cursor uint64 `json:"cursor"`
-		Limit  int    `json:"limit"`
-		WaitMs int64  `json:"wait_ms"`
-		Data   []byte `json:"data"`
-		Cols   int    `json:"cols"`
-		Rows   int    `json:"rows"`
-		Signal string `json:"signal"`
+		OperationID string `json:"operation_id"`
+		Cursor      uint64 `json:"cursor"`
+		Limit       int    `json:"limit"`
+		WaitMs      int64  `json:"wait_ms"`
+		Data        []byte `json:"data"`
+		Cols        int    `json:"cols"`
+		Rows        int    `json:"rows"`
+		Signal      string `json:"signal"`
 	}
 	decoder := json.NewDecoder(http.MaxBytesReader(w, request.Body, 2*terminalCapacity))
 	decoder.DisallowUnknownFields()
@@ -318,6 +342,14 @@ func (r *terminalRuntime) ServeHTTP(w http.ResponseWriter, request *http.Request
 		}
 		json.NewEncoder(w).Encode(result)
 		return
+	case "/operation":
+		result, ok := r.operationResult(body.OperationID)
+		if !ok {
+			http.Error(w, "operation unknown in this worker", 404)
+			return
+		}
+		json.NewEncoder(w).Encode(result)
+		return
 	case "/status":
 		json.NewEncoder(w).Encode(r.metadata())
 		return
@@ -337,6 +369,25 @@ func (r *terminalRuntime) ServeHTTP(w http.ResponseWriter, request *http.Request
 	if len(body.Data) > terminalCapacity || (request.URL.Path == "/resize" && terminalDimensions(body.Cols, body.Rows) != nil) || (request.URL.Path == "/signal" && !terminalSignalAllowed(body.Signal)) {
 		http.Error(w, "invalid operation", 400)
 		return
+	}
+	var entry *terminalOperationEntry
+	if request.URL.Path == "/write" && body.OperationID != "" {
+		var cached bool
+		var err error
+		entry, cached, err = r.beginOperation(body.OperationID, body.Data)
+		if err != nil {
+			http.Error(w, err.Error(), 409)
+			return
+		}
+		if cached {
+			result, _ := r.operationResult(body.OperationID)
+			json.NewEncoder(w).Encode(result)
+			return
+		}
+	}
+	// Before dispatch, a canceled request has not sent input; keep its ID uncertain.
+	if entry != nil {
+		defer r.finishOperation(entry, "uncertain", 0)
 	}
 	select {
 	case r.op <- struct{}{}:
@@ -362,6 +413,13 @@ func (r *terminalRuntime) ServeHTTP(w http.ResponseWriter, request *http.Request
 			n, err := r.peer.Write(body.Data)
 			if err == nil && n != len(body.Data) {
 				err = io.ErrShortWrite
+			}
+			if entry != nil {
+				status := "completed"
+				if err != nil {
+					status = "uncertain"
+				}
+				r.finishOperation(entry, status, n)
 			}
 			completed <- err
 		case "/resize":
@@ -395,6 +453,11 @@ func (r *terminalRuntime) ServeHTTP(w http.ResponseWriter, request *http.Request
 			http.Error(w, "state update failed", 500)
 			return
 		}
+	}
+	if entry != nil {
+		result, _ := r.operationResult(body.OperationID)
+		json.NewEncoder(w).Encode(result)
+		return
 	}
 	json.NewEncoder(w).Encode(r.metadata())
 }

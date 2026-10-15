@@ -134,9 +134,11 @@ func buildCommandSpecs() []commandSpec {
 	terminalOpenFlags := specFlags(interfaceSpecFlag, retrySpecFlags, jsonSpecFlag, []flagSpec{
 		specFlag("out", "string", "", "New private terminal directory"), specFlag("command", "string", "", "Exact remote command; empty starts shell"), specFlag("cwd", "string", "", "Remote working directory"), specFlag("cols", "int", "80", "Terminal columns"), specFlag("rows", "int", "24", "Terminal rows"), specFlag("term", "string", "xterm-256color", "Terminal type"), specFlag("timeout", "duration", "3h0m0s", "Lifetime bounded by ticket expiry"), specFlag("env", "string[]", "", "Repeatable remote NAME=VALUE"),
 	})
+	terminalOpenFlags = append(terminalOpenFlags, specFlag("log-limit", "int64", "0", "Private output.log byte limit; 0 disables, maximum 67108864"))
 	terminalControlFlags := specFlags(jsonSpecFlag, []flagSpec{specFlag("state", "string", "", "Private terminal state file"), specFlag("cursor", "uint64", "0", "Absolute output byte offset"), specFlag("limit", "int", "65536", "Maximum read bytes"), specFlag("wait", "duration", "0s", "Read wait; at most 30s"), specFlag("text", "string", "", "Exact input bytes"), specFlag("file", "string", "", "Input file; - reads stdin"), specFlag("cols", "int", "80", "Resize columns"), specFlag("rows", "int", "24", "Resize rows"), specFlag("signal", "string", "", "SSH signal name")})
+	terminalControlFlags = append(terminalControlFlags, specFlag("operation-id", "string", "", "Stable write ID; retained for worker lifetime, capacity 256"))
 	terminalSpec.Subcommands = append(terminalSpec.Subcommands, command("open", "Start a managed PTY", "terminal open TICKET --out DIR [flags]", "metadata", "private state path", []string{"network", "local_write", "remote_exec"}, terminalOpenFlags))
-	for _, action := range []string{"read", "write", "resize", "signal", "status", "close"} {
+	for _, action := range []string{"read", "write", "resize", "signal", "status", "wait", "operation", "close"} {
 		allowed := map[string]bool{"json": true, "state": true}
 		switch action {
 		case "read":
@@ -146,6 +148,11 @@ func buildCommandSpecs() []commandSpec {
 		case "write":
 			allowed["text"] = true
 			allowed["file"] = true
+			allowed["operation-id"] = true
+		case "wait":
+			allowed["wait"] = true
+		case "operation":
+			allowed["operation-id"] = true
 		case "resize":
 			allowed["cols"] = true
 			allowed["rows"] = true
@@ -155,6 +162,9 @@ func buildCommandSpecs() []commandSpec {
 		actual := []flagSpec{}
 		for _, flag := range terminalControlFlags {
 			if allowed[flag.Name] {
+				if action == "wait" && flag.Name == "wait" {
+					flag.Default, flag.Description = "30s", "Wait for closure; 0..30s, timeout returns closed=false"
+				}
 				actual = append(actual, flag)
 			}
 		}

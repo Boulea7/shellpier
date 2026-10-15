@@ -11,21 +11,27 @@ const terminalCapacity = 1 << 20
 const terminalDefaultRead = 64 << 10
 
 type terminalReadResult struct {
-	SessionID  string `json:"session_id,omitempty"`
-	Data       []byte `json:"data"`
-	NextCursor uint64 `json:"next_cursor"`
-	Dropped    uint64 `json:"dropped"`
-	Closed     bool   `json:"closed"`
-	ExitCode   *int   `json:"exit_code,omitempty"`
+	Log               *terminalLogStatus `json:"log,omitempty"`
+	TerminationReason string             `json:"termination_reason,omitempty"`
+	ExitStatusKnown   bool               `json:"exit_status_known"`
+	SessionID         string             `json:"session_id,omitempty"`
+	Data              []byte             `json:"data"`
+	NextCursor        uint64             `json:"next_cursor"`
+	Dropped           uint64             `json:"dropped"`
+	Closed            bool               `json:"closed"`
+	ExitCode          *int               `json:"exit_code,omitempty"`
 }
 
 type terminalRing struct {
+	log      *terminalLog
 	mu       sync.Mutex
 	data     []byte
 	offset   uint64
 	closed   bool
 	exitCode *int
 	changed  chan struct{}
+	reason   string
+	known    bool
 }
 
 func newTerminalRing() *terminalRing { return &terminalRing{changed: make(chan struct{})} }
@@ -35,6 +41,9 @@ func (r *terminalRing) Write(p []byte) (int, error) {
 	defer r.mu.Unlock()
 	if r.closed {
 		return 0, errors.New("terminal output is closed")
+	}
+	if r.log != nil {
+		r.log.enqueue(p)
 	}
 	n := len(p)
 	r.offset += uint64(n)
@@ -51,11 +60,14 @@ func (r *terminalRing) Write(p []byte) (int, error) {
 	r.notify()
 	return n, nil
 }
-func (r *terminalRing) finish(code int) {
+func (r *terminalRing) finish(code int) { r.finishOutcome(code, "exited", code >= 0) }
+func (r *terminalRing) finishOutcome(code int, reason string, known bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if !r.closed {
 		r.closed = true
+		r.reason = reason
+		r.known = known
 		r.exitCode = &code
 		r.notify()
 	}
@@ -82,7 +94,10 @@ func (r *terminalRing) read(ctx context.Context, cursor uint64, limit int, wait 
 		if count > limit {
 			count = limit
 		}
-		result := terminalReadResult{Data: append([]byte{}, r.data[int(cursor-base):int(cursor-base)+count]...), NextCursor: cursor + uint64(count), Dropped: dropped, Closed: r.closed}
+		result := terminalReadResult{Data: append([]byte{}, r.data[int(cursor-base):int(cursor-base)+count]...), NextCursor: cursor + uint64(count), Dropped: dropped, Closed: r.closed, TerminationReason: r.reason, ExitStatusKnown: r.known}
+		if r.log != nil {
+			result.Log = r.log.snapshot()
+		}
 		if r.exitCode != nil {
 			code := *r.exitCode
 			result.ExitCode = &code
@@ -104,7 +119,10 @@ func (r *terminalRing) read(ctx context.Context, cursor uint64, limit int, wait 
 func (r *terminalRing) snapshot() terminalReadResult {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	result := terminalReadResult{Data: append([]byte{}, r.data...), NextCursor: r.offset, Dropped: r.offset - uint64(len(r.data)), Closed: r.closed}
+	result := terminalReadResult{Data: append([]byte{}, r.data...), NextCursor: r.offset, Dropped: r.offset - uint64(len(r.data)), Closed: r.closed, TerminationReason: r.reason, ExitStatusKnown: r.known}
+	if r.log != nil {
+		result.Log = r.log.snapshot()
+	}
 	if r.exitCode != nil {
 		code := *r.exitCode
 		result.ExitCode = &code
@@ -125,5 +143,5 @@ func terminalReadSnapshot(s terminalReadResult, cursor uint64, limit int) (termi
 	if count > limit {
 		count = limit
 	}
-	return terminalReadResult{Data: append([]byte{}, s.Data[int(cursor-base):int(cursor-base)+count]...), NextCursor: cursor + uint64(count), Dropped: dropped, Closed: true, ExitCode: s.ExitCode}, nil
+	return terminalReadResult{Log: s.Log, Data: append([]byte{}, s.Data[int(cursor-base):int(cursor-base)+count]...), NextCursor: cursor + uint64(count), Dropped: dropped, Closed: true, ExitCode: s.ExitCode, TerminationReason: s.TerminationReason, ExitStatusKnown: s.ExitStatusKnown}, nil
 }

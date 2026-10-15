@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"encoding/base64"
 	"errors"
 	"fmt"
@@ -100,17 +101,37 @@ func (w *limitedCapture) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
+// executionOutcome separates an observed remote exit from transport uncertainty.
+func executionOutcome(err error) (string, bool) {
+	if err == nil {
+		return "exited", true
+	}
+	var exit *ssh.ExitError
+	if errors.As(err, &exit) {
+		return "exited", true
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return "expired", false
+	}
+	if errors.Is(err, context.Canceled) {
+		return "canceled", false
+	}
+	return "connection_lost", false
+}
+
 type execResult struct {
-	SchemaVersion   int    `json:"schema_version"`
-	Command         string `json:"command"`
-	OK              bool   `json:"ok"`
-	ExitCode        int    `json:"exit_code"`
-	Stdout          string `json:"stdout"`
-	StdoutEncoding  string `json:"stdout_encoding"`
-	Stderr          string `json:"stderr"`
-	StderrEncoding  string `json:"stderr_encoding"`
-	StdoutTruncated bool   `json:"stdout_truncated"`
-	StderrTruncated bool   `json:"stderr_truncated"`
+	TerminationReason string `json:"termination_reason"`
+	ExitStatusKnown   bool   `json:"exit_status_known"`
+	SchemaVersion     int    `json:"schema_version"`
+	Command           string `json:"command"`
+	OK                bool   `json:"ok"`
+	ExitCode          int    `json:"exit_code"`
+	Stdout            string `json:"stdout"`
+	StdoutEncoding    string `json:"stdout_encoding"`
+	Stderr            string `json:"stderr"`
+	StderrEncoding    string `json:"stderr_encoding"`
+	StdoutTruncated   bool   `json:"stdout_truncated"`
+	StderrTruncated   bool   `json:"stderr_truncated"`
 }
 
 func executionResult(command string, err error, stdout, stderr *limitedCapture) execResult {
@@ -130,5 +151,6 @@ func executionResult(command string, err error, stdout, stderr *limitedCapture) 
 	}
 	out, outEncoding := encode(stdout.data)
 	diagnostic, diagnosticEncoding := encode(stderr.data)
-	return execResult{1, command, err == nil, code, out, outEncoding, diagnostic, diagnosticEncoding, stdout.truncated, stderr.truncated}
+	reason, known := executionOutcome(err)
+	return execResult{reason, known, 1, command, err == nil, code, out, outEncoding, diagnostic, diagnosticEncoding, stdout.truncated, stderr.truncated}
 }

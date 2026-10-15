@@ -41,25 +41,29 @@ type terminalState struct {
 	Workdir    string    `json:"workdir,omitempty"`
 }
 type terminalConfig struct {
+	LogLimit  int64               `json:"log_limit,omitempty"`
 	Ticket    access.Ticket       `json:"ticket"`
 	Interface string              `json:"interface,omitempty"`
 	Retry     access.RetryOptions `json:"retry"`
 	Env       []string            `json:"env,omitempty"`
 }
 type terminalMetadata struct {
-	StatePath  string    `json:"state_path"`
-	ID         string    `json:"id"`
-	ExpiresAt  time.Time `json:"expires_at"`
-	Term       string    `json:"term"`
-	Cols       int       `json:"cols"`
-	Rows       int       `json:"rows"`
-	Closed     bool      `json:"closed"`
-	ExitCode   *int      `json:"exit_code,omitempty"`
-	NextCursor uint64    `json:"next_cursor"`
+	Log               *terminalLogStatus `json:"log,omitempty"`
+	TerminationReason string             `json:"termination_reason,omitempty"`
+	ExitStatusKnown   bool               `json:"exit_status_known"`
+	StatePath         string             `json:"state_path"`
+	ID                string             `json:"id"`
+	ExpiresAt         time.Time          `json:"expires_at"`
+	Term              string             `json:"term"`
+	Cols              int                `json:"cols"`
+	Rows              int                `json:"rows"`
+	Closed            bool               `json:"closed"`
+	ExitCode          *int               `json:"exit_code,omitempty"`
+	NextCursor        uint64             `json:"next_cursor"`
 }
 
 func terminalMeta(state terminalState, path string, snapshot terminalReadResult) terminalMetadata {
-	return terminalMetadata{StatePath: path, ID: state.ID, ExpiresAt: state.ExpiresAt, Term: state.Term, Cols: state.Cols, Rows: state.Rows, Closed: snapshot.Closed, ExitCode: snapshot.ExitCode, NextCursor: snapshot.NextCursor}
+	return terminalMetadata{Log: snapshot.Log, TerminationReason: snapshot.TerminationReason, ExitStatusKnown: snapshot.ExitStatusKnown, StatePath: path, ID: state.ID, ExpiresAt: state.ExpiresAt, Term: state.Term, Cols: state.Cols, Rows: state.Rows, Closed: snapshot.Closed, ExitCode: snapshot.ExitCode, NextCursor: snapshot.NextCursor}
 }
 
 func terminalDimensions(cols, rows int) error {
@@ -70,15 +74,17 @@ func terminalDimensions(cols, rows int) error {
 }
 func terminal(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 	if len(args) == 0 || args[0] == "--help" || args[0] == "-h" || args[0] == "help" {
-		_, err := io.WriteString(stdout, "terminal open TICKET --out NEW-PRIVATE-DIR [--command SHELL] [--timeout 3h]\nterminal read|write|resize|signal|status|close --state FILE\nread returns base64 bytes with absolute cursors; closed output remains in a bounded private snapshot.\n")
+		_, err := io.WriteString(stdout, "terminal open TICKET --out NEW-PRIVATE-DIR [--command SHELL] [--timeout 3h]\nterminal read|write|resize|signal|status|close|wait|operation --state FILE\nread returns base64 bytes with absolute cursors; closed output remains in a bounded private snapshot.\n")
 		return err
 	}
 	switch args[0] {
 	case "open":
 		return terminalOpen(ctx, args[1:], stdout, stderr)
+	case "wait":
+		return terminalWait(ctx, args[1:], stdin, stdout, stderr)
 	case "serve":
 		return terminalServeEntry(ctx, args[1:], stdin, stdout, stderr)
-	case "read", "write", "resize", "signal", "status", "close":
+	case "read", "write", "resize", "signal", "status", "close", "operation":
 		return terminalControl(ctx, args[0], args[1:], stdin, stdout, stderr)
 	default:
 		return errors.New("unknown terminal operation")
@@ -216,6 +222,7 @@ func terminalOpen(ctx context.Context, args []string, stdout, stderr io.Writer) 
 	rows := f.Int("rows", 24, "terminal rows")
 	term := f.String("term", "xterm-256color", "TERM name")
 	timeout := f.Duration("timeout", 3*time.Hour, "terminal lifetime, bounded by ticket expiry")
+	logLimit := f.Int64("log-limit", 0, "optional private output.log byte limit, at most 64 MiB")
 	iface := f.String("interface", "", "direct routing interface")
 	machine := f.Bool("json", false, "emit metadata as JSON")
 	retry := clientRetryFlags(f)
@@ -229,6 +236,9 @@ func terminalOpen(ctx context.Context, args []string, stdout, stderr io.Writer) 
 	}
 	if err := terminalDimensions(*cols, *rows); err != nil {
 		return err
+	}
+	if *logLimit < 0 || *logLimit > terminalLogMax {
+		return errors.New("log limit must be 0..67108864")
 	}
 	if *timeout <= 0 || *timeout > 24*time.Hour {
 		return errors.New("terminal timeout must be positive and at most 24h")
@@ -291,7 +301,7 @@ func terminalOpen(ctx context.Context, args []string, stdout, stderr io.Writer) 
 		return err
 	}
 	knownFiles["state.json"], _ = terminalFileIdentity(statePath)
-	if err = writeJSONPrivate(filepath.Join(path, "config.json"), terminalConfig{Ticket: ticket, Interface: *iface, Retry: *retry, Env: env}); err != nil {
+	if err = writeJSONPrivate(filepath.Join(path, "config.json"), terminalConfig{Ticket: ticket, Interface: *iface, Retry: *retry, Env: env, LogLimit: *logLimit}); err != nil {
 		return err
 	}
 	knownFiles["config.json"], _ = terminalFileIdentity(filepath.Join(path, "config.json"))
@@ -428,6 +438,10 @@ func terminalControl(ctx context.Context, mode string, args []string, stdin io.R
 	var textValue, fileValue, signalValue string
 	colsValue, rowsValue := 80, 24
 	cursor, limit, wait, text, file, cols, rows, signal := &cursorValue, &limitValue, &waitValue, &textValue, &fileValue, &colsValue, &rowsValue, &signalValue
+	operationID := ""
+	if mode == "write" || mode == "operation" {
+		f.StringVar(&operationID, "operation-id", "", "unique input ID; retained for this worker lifetime, at most 256 IDs")
+	}
 	switch mode {
 	case "read":
 		f.Uint64Var(cursor, "cursor", 0, "absolute output byte offset")
@@ -459,7 +473,13 @@ func terminalControl(ctx context.Context, mode string, args []string, stdin io.R
 	if err != nil {
 		return err
 	}
-	body := map[string]any{}
+	if operationID != "" && !terminalOperationID(operationID) {
+		return errors.New("invalid operation ID")
+	}
+	if mode == "operation" && operationID == "" {
+		return errors.New("operation requires --operation-id")
+	}
+	body := map[string]any{"operation_id": operationID}
 	switch mode {
 	case "read":
 		body = map[string]any{"cursor": *cursor, "limit": *limit, "wait_ms": wait.Milliseconds()}
@@ -487,7 +507,7 @@ func terminalControl(ctx context.Context, mode string, args []string, stdin io.R
 		if len(data) > terminalCapacity {
 			return errors.New("write exceeds 1 MiB")
 		}
-		body = map[string]any{"data": data}
+		body = map[string]any{"data": data, "operation_id": operationID}
 	case "resize":
 		if err = terminalDimensions(*cols, *rows); err != nil {
 			return err
@@ -559,6 +579,13 @@ func terminalControl(ctx context.Context, mode string, args []string, stdin io.R
 	}
 	if resp.StatusCode != 200 {
 		return fmt.Errorf("terminal operation refused (HTTP %d)", resp.StatusCode)
+	}
+	if mode == "operation" || (mode == "write" && operationID != "") {
+		var result terminalOperationResult
+		if json.Unmarshal(data, &result) != nil || result.ID != operationID {
+			return errors.New("invalid operation response")
+		}
+		return json.NewEncoder(stdout).Encode(result)
 	}
 	if mode == "read" {
 		var r terminalReadResult
