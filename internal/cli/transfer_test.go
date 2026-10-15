@@ -306,3 +306,41 @@ func TestTransferHelp(t *testing.T) {
 		}
 	}
 }
+
+func TestJSONTransferKeepsProgressOnStderr(t *testing.T) {
+	dir, ticket := slowTransferEndpoint(t)
+	source, destination := filepath.Join(dir, "source"), filepath.Join(dir, "destination")
+	content := []byte("progress data\n")
+	if err := os.WriteFile(source, content, 0600); err != nil {
+		t.Fatal(err)
+	}
+	var output, diagnostics bytes.Buffer
+	err := Run(context.Background(), []string{"--json", "upload", "@" + ticket, source, transferPath(destination), "--progress", "jsonl"}, strings.NewReader(""), &output, &diagnostics, "test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var result transferSummary
+	if err := json.Unmarshal(output.Bytes(), &result); err != nil || result.Bytes != int64(len(content)) {
+		t.Fatalf("invalid stdout summary: %s", output.String())
+	}
+	decoder := json.NewDecoder(&diagnostics)
+	events := 0
+	for {
+		var event struct {
+			Event string `json:"event"`
+			Bytes int64  `json:"bytes"`
+		}
+		if err := decoder.Decode(&event); errors.Is(err, io.EOF) {
+			break
+		} else if err != nil {
+			t.Fatal(err)
+		}
+		if event.Event != "transfer_progress" || event.Bytes < 0 || event.Bytes > int64(len(content)) {
+			t.Fatalf("invalid progress event: %+v", event)
+		}
+		events++
+	}
+	if events == 0 {
+		t.Fatal("global JSON discarded explicit progress events")
+	}
+}

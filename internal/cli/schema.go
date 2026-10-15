@@ -89,8 +89,8 @@ func buildCommandSpecs() []commandSpec {
 		command("relay", "Run an authenticated WebSocket relay", "relay [flags]", "foreground", "listener metadata", []string{"listener", "optional_local_write"}, []flagSpec{specFlag("listen", "string", "127.0.0.1:8080", "Listener bind address"), specFlag("token-file", "string", "", "Enrollment key file"), specFlag("init-key", "string", "", "Create a private key and exit"), specFlag("max-sessions", "int", "64", "Session capacity"), specFlag("max-ttl", "duration", "24h0m0s", "Maximum nonpersistent lifetime"), specFlag("allow-persistent", "bool", "false", "Explicitly permit TTL zero"), specFlag("tls-cert", "string", "", "Native HTTPS PEM certificate"), specFlag("tls-key", "string", "", "Native HTTPS PEM key")}),
 		command("inspect", "Inspect a ticket without connecting", "inspect TICKET [flags]", "metadata", "credential-free ticket summary", local, jsonSpecFlag),
 		command("check", "Verify remote host and account", "check TICKET [flags]", "metadata", "identity and pinned key result", remote, specFlags(interfaceSpecFlag, retrySpecFlags, jsonSpecFlag, []flagSpec{specFlag("timeout", "duration", "20s", "Total identity check timeout")})),
-		command("upload", "Upload one file without overwriting", "upload [flags] TICKET LOCAL REMOTE", "metadata", "transfer byte count", []string{"local_read", "network", "remote_write"}, transferSpecFlags()),
-		command("download", "Download one file without overwriting", "download [flags] TICKET REMOTE LOCAL", "metadata", "transfer byte count", []string{"network", "local_write"}, transferSpecFlags()),
+		command("upload", "Upload a file or directory without overwriting", "upload [flags] TICKET LOCAL REMOTE", "metadata", "byte/file/directory counts, single-file SHA-256 and warnings; optional stderr progress", []string{"local_read", "optional_local_write", "network", "remote_write"}, transferSpecFlags()),
+		command("download", "Download a file or directory without overwriting", "download [flags] TICKET REMOTE LOCAL", "metadata", "byte/file/directory counts, single-file SHA-256 and warnings; optional stderr progress", []string{"network", "local_write"}, transferSpecFlags()),
 		command("keygen", "Generate a private key directory", "keygen --out DIR [flags]", "metadata", "key paths and fingerprint", write, specFlags(jsonSpecFlag, []flagSpec{specFlag("out", "string", "", "New private output directory")})),
 		command("completion", "Print a static shell completion script", "completion bash|zsh|fish|powershell", "script", "completion script; never installs it", []string{}, []flagSpec{}),
 		command("version", "Show build metadata", "version [--json]", "metadata", "version text or build metadata", []string{}, jsonSpecFlag),
@@ -100,7 +100,7 @@ func buildCommandSpecs() []commandSpec {
 	}
 	fileBase := specFlags(interfaceSpecFlag, retrySpecFlags, jsonSpecFlag, []flagSpec{specFlag("timeout", "duration", "5m0s", "Total file operation timeout")})
 	files := command("files", "Operate on remote paths with SFTP", "files ACTION [flags] TICKET PATH [DEST]", "metadata_or_bytes", "metadata or raw bytes; JSON read uses base64", []string{"network", "optional_remote_write"}, []flagSpec{})
-	for _, action := range []string{"list", "stat", "read", "mkdir", "rename", "remove"} {
+	for _, action := range []string{"list", "stat", "read", "checksum", "mkdir", "rename", "remove"} {
 		ff := specFlags(fileBase)
 		effect := []string{"network", "remote_read"}
 		if action == "list" {
@@ -181,7 +181,16 @@ func buildCommandSpecs() []commandSpec {
 	return commands
 }
 func transferSpecFlags() []flagSpec {
-	return specFlags(interfaceSpecFlag, retrySpecFlags, jsonSpecFlag, []flagSpec{specFlag("timeout", "duration", "5m0s", "Maximum transfer duration")})
+	return specFlags(interfaceSpecFlag, retrySpecFlags, jsonSpecFlag, []flagSpec{
+		specFlag("timeout", "duration", "5m0s", "Maximum transfer duration"),
+		specFlag("recursive", "bool", "false", "Transfer a tree; mutually exclusive with resume"),
+		specFlag("exclude", "string[]", "", "Relative slash glob or basename exclusion; no **"),
+		specFlag("max-files", "int", "10000", "Recursive file limit; 1..100000"),
+		specFlag("max-depth", "int", "32", "Recursive nesting limit; 0..128"),
+		specFlag("resume", "bool", "false", "Resume one file using a private journal and owned partial"),
+		specFlag("resume-state", "string", "", "Private resume journal path; requires resume"),
+		specFlag("progress", "string", "", "jsonl emits progress events on stderr"),
+	})
 }
 func findCommandSpec(name string) (commandSpec, bool) {
 	for _, s := range commandSpecs {

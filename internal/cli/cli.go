@@ -121,7 +121,7 @@ func Run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 	case "check":
 		return check(ctx, args[1:], stdout, stderr)
 	case "upload", "download":
-		return transfer(ctx, args[0], args[1:], stdout, stderr)
+		return transferWithProgress(ctx, args[0], args[1:], stdout, stderr, diagnostics)
 	case "keygen":
 		return keygen(args[1:], stdout, stderr)
 	case "completion":

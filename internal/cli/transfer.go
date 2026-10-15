@@ -16,11 +16,23 @@ import (
 )
 
 func transfer(parent context.Context, command string, args []string, stdout, stderr io.Writer) error {
+	return transferWithProgress(parent, command, args, stdout, stderr, stderr)
+}
+
+func transferWithProgress(parent context.Context, command string, args []string, stdout, stderr, progressWriter io.Writer) error {
 	f := flags(command, stderr)
 	retry := clientRetryFlags(f)
 	iface := f.String("interface", "", "direct network interface")
 	timeout := f.Duration("timeout", 5*time.Minute, "maximum transfer duration")
-	asJSON := f.Bool("json", false, "emit transferred byte count as JSON")
+	asJSON := f.Bool("json", false, "emit transfer summary as JSON")
+	recursive := f.Bool("recursive", false, "transfer a directory tree; reject symlinks and existing destinations")
+	maxFiles := f.Int("max-files", 10000, "maximum files in a recursive transfer (1..100000)")
+	maxDepth := f.Int("max-depth", 32, "maximum recursive nesting (0..128)")
+	resume := f.Bool("resume", false, "resume one file using an owned partial and private journal")
+	resumeState := f.String("resume-state", "", "private local resume manifest; default uses the user cache")
+	progressMode := f.String("progress", "", "jsonl emits progress events on stderr")
+	var exclude transferExclusions
+	f.Var(&exclude, "exclude", "exclude a relative slash glob or basename; repeatable, no **")
 	if err := parseFlags(f, args); err != nil {
 		return err
 	}
@@ -32,6 +44,9 @@ func transfer(parent context.Context, command string, args []string, stdout, std
 		if value == "" || strings.ContainsRune(value, 0) {
 			return errors.New("source and destination paths must be nonempty and contain no NUL")
 		}
+	}
+	if *maxFiles < 1 || *maxFiles > 100000 || *maxDepth < 0 || *maxDepth > 128 || *recursive && (*resume || *resumeState != "") || *resumeState != "" && !*resume || *progressMode != "" && *progressMode != "jsonl" || len(exclude) > 0 && !*recursive {
+		return errors.New("invalid recursive/resume/progress options or capacity limits")
 	}
 	if err := retry.Validate(); err != nil {
 		return err
@@ -55,14 +70,38 @@ func transfer(parent context.Context, command string, args []string, stdout, std
 		return err
 	}
 	defer sf.Close()
-	var count int64
-	switch command {
-	case "download":
-		count, err = downloadFile(ctx, sf, positional[1], positional[2])
-	case "upload":
-		count, err = uploadFile(ctx, sf, positional[1], positional[2])
-	default:
+	src, dst := transferFS{}, transferFS{remote: sf}
+	if command == "download" {
+		src, dst = dst, src
+	} else if command != "upload" {
 		return errors.New("unsupported transfer direction")
+	}
+	progress := func(n int64) error {
+		if *progressMode == "" {
+			return nil
+		}
+		return json.NewEncoder(progressWriter).Encode(struct {
+			Event string `json:"event"`
+			Bytes int64  `json:"bytes"`
+		}{"transfer_progress", n})
+	}
+	result := transferSummary{Command: command, Warnings: []string{}}
+	switch {
+	case *recursive:
+		result, err = runTransferTree(ctx, src, dst, positional[1], positional[2], exclude, *maxFiles, *maxDepth, progress)
+	case *resume:
+		result, err = resumeTransfer(ctx, src, dst, positional[1], positional[2], *resumeState, command, ticket.HostKey, progress)
+	default:
+		copyCtx := context.WithValue(ctx, transferProgressKey{}, progress)
+		if command == "download" {
+			result.Bytes, err = downloadFile(copyCtx, sf, positional[1], positional[2])
+		} else {
+			result.Bytes, err = uploadFile(copyCtx, sf, positional[1], positional[2])
+		}
+		if err == nil {
+			result.SHA256, _, err = transferDigest(ctx, dst, positional[2])
+			result.Files = 1
+		}
 	}
 	if err != nil {
 		return err
@@ -70,14 +109,27 @@ func transfer(parent context.Context, command string, args []string, stdout, std
 	if err = ctx.Err(); err != nil {
 		return err
 	}
-	if *asJSON {
-		return json.NewEncoder(stdout).Encode(struct {
-			Command string `json:"command"`
-			Bytes   int64  `json:"bytes"`
-		}{command, count})
+	result.Command = command
+	if result.Warnings == nil {
+		result.Warnings = []string{}
 	}
-	_, err = fmt.Fprintf(stdout, "Transferred %d bytes.\n", count)
+	if *asJSON {
+		return json.NewEncoder(stdout).Encode(result)
+	}
+	_, err = fmt.Fprintf(stdout, "Transferred %d bytes in %d files and %d directories.\n", result.Bytes, result.Files, result.Directories)
+	for _, warning := range result.Warnings {
+		if _, e := fmt.Fprintln(stdout, "Warning:", warning); e != nil {
+			return e
+		}
+	}
 	return err
+}
+
+type transferProgressKey struct{}
+
+func transferProgress(ctx context.Context) func(int64) error {
+	callback, _ := ctx.Value(transferProgressKey{}).(func(int64) error)
+	return callback
 }
 
 func openTransferSource(path string) (*os.File, error) {
@@ -147,7 +199,7 @@ func downloadFile(ctx context.Context, sf *sftp.Client, source, destination stri
 		return 0, err
 	}
 	// Fixed-size copying prevents the source size from becoming an allocation size.
-	count, err = io.CopyBuffer(writerOnly{output}, readerOnly{input}, make([]byte, 64*1024))
+	count, err = transferCopy(ctx, output, input, transferProgress(ctx))
 	closeErr := output.Close()
 	sourceCloseErr := input.Close()
 	inputClosed = true
@@ -183,7 +235,7 @@ func uploadFile(ctx context.Context, sf *sftp.Client, source, destination string
 		}
 		return 0, err
 	}
-	count, copyErr := io.CopyBuffer(writerOnly{output}, readerOnly{input}, make([]byte, 64*1024))
+	count, copyErr := transferCopy(ctx, output, input, transferProgress(ctx))
 	closeErr := output.Close()
 	sourceCloseErr := input.Close()
 	inputClosed = true
