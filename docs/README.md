@@ -27,6 +27,7 @@ flowchart LR
 
 - [中继部署](relay.md)：本地演练、TLS、容器与运行限制。
 - [兼容性](compatibility.md)：系统要求、已测试的平台与会话结束行为。
+- [Windows 运行时调查](windows-runtime.md)：历史崩溃证据、上游修复与隔离构建。
 - [方案调研](research.md)：同类工具与故障经验。
 - [安全策略](../SECURITY.md)：权限模型与漏洞报告。
 

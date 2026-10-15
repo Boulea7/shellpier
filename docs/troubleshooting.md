@@ -126,3 +126,5 @@
 - MCP 上传/下载拒绝本地 `-`，请改用文件路径；MCP 的 stdin/stdout 保留给 JSON-RPC。
 - download 到 `-` 的 stdout 是文件内容，不含传输摘要，不与 `--json` 合用。进度写 stderr，接收方仍须处理失败前已收到的数据。
 - PowerShell 旧版文本管道可能重编码二进制；改为普通文件路径，或使用保持字节的重定向方式。上传流被中断时可能留下远端部分文件，重新上传不会覆盖它。
+
+Windows 若出现 `fatal error` 或异常退出，请保留首次完整 stderr、`version --json`、OS 与 CPU 信息；重复运行成功不能替代原失败证据。当前已知 Go 缺陷、构建处理及历史归因限制见 [Windows 运行时调查](windows-runtime.md)。无需自行修改已安装 Go 或关闭异步抢占。

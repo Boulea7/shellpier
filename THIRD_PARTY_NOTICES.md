@@ -144,6 +144,10 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 ## Go runtime and toolchain
 
+Windows release executables are built with an isolated Go 1.27.2 toolchain containing a backport of the upstream Windows asynchronous-preemption guard, commit `0042b271db9c51f90d1887435026562a0778d7d9` (CL 828906, issue #79249). The backport retains the release branch preemption condition and adds the upstream thread-state safety check. It does not modify the developer's installed Go. Windows archives include toolchain provenance; see [the runtime investigation](docs/windows-runtime.md) for scope and removal conditions. This modification remains subject to the original Go BSD license reproduced below.
+
+Upstream source: https://github.com/golang/go/commit/0042b271db9c51f90d1887435026562a0778d7d9
+
 Packaging toolchain: `go version go1.27.2 darwin/arm64`. Source: https://go.dev/
 
 ```text

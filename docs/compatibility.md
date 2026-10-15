@@ -14,7 +14,7 @@
 | Windows 7 SP1/8 | `legacy/shellpier.cmd` | 独立 Windows PowerShell 2.0/.NET 3.5 路线；Bitvise 9.66；管理员、适用许可和可信签名；尚未完成 Win7/8 实机测试 |
 | XP/Vista | 没有受支持的自动路线 | ShellPier 未提供这些系统的自动配置入口 |
 
-当前源码的构建契约是 [go.mod](../go.mod) 的 Go 1.26+。上述运行时下限来自 [Go 官方最低要求](https://go.dev/wiki/MinimumRequirements)；升级工具链时须重新检查。Windows Server 各版本尚未逐一测试。
+当前源码的构建契约是 [go.mod](../go.mod) 的 Go 1.26+。上述运行时下限来自 [Go 官方最低要求](https://go.dev/wiki/MinimumRequirements)；升级工具链时须重新检查。Windows Server 各版本尚未逐一测试。Windows 构建另回补已合入 Go 上游的线程状态判断，工具链来源随包记录；历史崩溃仍不能确认归因，见 [Windows 运行时调查](windows-runtime.md)。
 
 `scripts/bootstrap.ps1` 是现代 Windows 的下载辅助脚本，要求 PowerShell 5.1+；它不是 Legacy 入口。Legacy 文件可离线复制；Bitvise 服务端需要安装。首次安装可能需要重启才能完成无密码 Windows 登录，脚本不自动重启。详见 [Legacy 指南](legacy-windows.md)、[Bitvise 官方下载](https://bitvise.com/ssh-server-download)与[许可](https://bitvise.com/ssh-server-license)。
 

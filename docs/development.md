@@ -73,3 +73,5 @@ python3 scripts/validate_docs.py --root /path/to/unpacked-release
 ```
 
 发行包不包含凭据、缓存或内部协作文档。依赖、许可或支持平台变化在 PR 中说明。
+
+Windows 构建使用隔离的 Go 1.27.2 副本回补官方运行时线程状态判断，不修改本机已安装 Go。原因、对照测试、复现方法与移除条件见 [Windows 运行时调查](windows-runtime.md)；不要把修复已知缺陷写成已确认原事故根因。

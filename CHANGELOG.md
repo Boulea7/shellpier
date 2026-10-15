@@ -2,6 +2,8 @@
 
 ## v0.6.0-alpha.1 — 2026-10-16
 
+- Windows 构建在隔离 Go 1.27.2 中回补已合入上游的异常/系统调用期间异步抢占保护，随包记录来源；它消除已知 Go 缺陷，原 v0.5 崩溃仍无法确认归因。调查与测试边界见 [Windows 运行时记录](docs/windows-runtime.md)。
+
 - 新增内置 SOCKS5 CONNECT：`forward --dynamic --listen 1080`，支持 IPv4、IPv6 与目标端域名解析，沿用 loopback、TTL 和目的地址限制。
 - 新增 `proxy --to HOST:PORT` stdin/stdout TCP 字节桥，吸收 OpenSSH `-W` 的组合方式；不带 `--to` 的既有代理行为保留。
 - 新增 `upload TICKET - REMOTE` 与 `download TICKET REMOTE -`，无需本地中间文件；仍默认不覆盖，不增加普通传输 SHA 校验。
