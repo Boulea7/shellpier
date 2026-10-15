@@ -4,6 +4,16 @@
 
 PowerShell 的票据参数必须加引号，例如 `'@access.json'`。`@file` 表示从本地文件读取凭据，避免把长票据写进命令历史。参数名和默认值可用 `shellpier <命令> --help` 查看。
 
+先用这三条完成分享、连接和传文件（目标端运行第一条，控制端使用收到的票据）：
+
+```sh
+shellpier share --output access.json
+shellpier shell @access.json
+shellpier upload @access.json ./local.txt remote.txt
+```
+
+只分享一个目录时，将第一条换成 `shellpier share --root ./shared --output access.json`，控制端直接用 upload/download 或 SFTP；不必额外配置访问模式。
+
 ## 常用命令
 
 | 命令 | 用途 |
@@ -52,6 +62,7 @@ PowerShell 的票据参数必须加引号，例如 `'@access.json'`。`@file` �
 | `--shell auto` | 可选 `auto`、`powershell`、`cmd`、`sh` |
 | `--work-dir PATH` | 设置命令起始目录，不构成文件系统沙箱 |
 | `--keep-awake` | 自愿启用系统防睡眠机制，保持前台进程 |
+| `--root DIR` | 只分享此目录，自动选择 SFTP；远端路径从 `/` 开始 |
 | `--access-mode full` | 默认完整功能；`sftp` 仅文件操作，`sftp-readonly` 仅只读文件操作 |
 | `--reconnect-min 1s` / `--reconnect-max 30s` | share/host 的中继重连等待范围 |
 
@@ -61,7 +72,7 @@ PowerShell 的票据参数必须加引号，例如 `'@access.json'`。`@file` �
 shellpier host @host.ticket --shell sh --work-dir /home/you/work
 ```
 
-`share`、`host` 与 `service plan/install` 都支持 `--access-mode full|sftp|sftp-readonly`。非 `full` 模式拒绝 exec、shell、PTY、jobs 和端口转发，也不能与 `--allow-jobs` 或 `--allow-forward` 合用。`sftp-readonly` 禁止 SFTP 写入，但仍可读取当前账户有权访问的路径；`--work-dir` 是起始目录，不是文件系统沙箱。通过 `capabilities` 的 `access_mode` 与 `sftp_read_only` 查看目标策略。
+`share`、`host` 与 `service plan/install` 都支持 `--access-mode full|sftp|sftp-readonly`。非 `full` 模式拒绝 exec、shell、PTY、jobs 和端口转发；不要同时显式开启 jobs 或配置转发。完整模式默认可用 jobs 与 TCP 转发。`--root DIR` 自动选择 SFTP 专用模式，远端路径从虚拟 `/` 开始；加 `--access-mode sftp-readonly` 可只读分享。未设 root 的只读模式仍可读取当前账户有权访问的路径；`--work-dir` 只是起始目录。通过 `capabilities` 的 `access_mode` 与 `sftp_read_only` 查看目标策略。
 
 `share` 不指定 `--output` 时会把完整访问票据写到 stdout，包括 JSON 输出；不要把它接入公共日志。`host --json` 不输出控制端私钥，但状态文件本身仍须私下保管。
 
@@ -203,25 +214,23 @@ shellpier targets remove lab --json
 | `--resume --resume-state ./transfer.json` | 单文件专用，使用私有本地 journal 与本次部分文件；不与递归合用 |
 | `--progress jsonl` | 进度事件写 stderr；`--json` 最终摘要写 stdout |
 | `--dry-run` | 只读预检并输出计划，不创建目标或续传状态；不能与 resume 合用 |
-| `--verify` | 比较源文件传输前后状态与 SHA256，再独立读取目标比较 SHA256 |
 | `--preserve-times` | 新建文件和目录保留秒级 mtime；不保留原 atime、权限或所有权 |
-| `--skip-identical` | 允许已有目录；已有文件仅在 SHA256 相同时跳过，不同则预检报错；不能与 resume 合用 |
-| `--bwlimit 1048576` | 整次操作的字节/秒预算，默认 `0` 不限速；复制、哈希与续传前缀校验共享预算，不含 metadata/SSH framing |
+| `--skip-existing` | 允许已有目录，直接跳过已有普通文件，不比较内容；不能与 resume 合用 |
+| `--bwlimit 1048576` | 整次操作的字节/秒预算，默认 `0` 不限速；复制与续传内部校验共享预算，不含 metadata/SSH framing |
 
 
 ```sh
 shellpier upload target:lab ./build remote-build --recursive --exclude '*.tmp' --progress jsonl --json
 shellpier download target:lab remote.bin ./received.bin --resume --resume-state ./transfer.json --json
-shellpier files checksum target:lab remote.bin --json
-shellpier upload target:lab ./build remote-build --recursive --dry-run --skip-identical --json
-shellpier upload target:lab ./build remote-build --recursive --skip-identical --verify --preserve-times --bwlimit 1048576 --json
+shellpier upload target:lab ./build remote-build --recursive --dry-run --skip-existing --json
+shellpier upload target:lab ./build remote-build --recursive --skip-existing --preserve-times --bwlimit 1048576 --json
 ```
 
-`files checksum` 流式计算远端普通文件的 SHA256。续传只复用匹配本次传输身份的部分文件，不覆盖已完成目标；它不是任意远端文件的追加入口。网络中断后显式再次运行同一续传命令，不自动重放写入。
+普通传输不要求手工校验摘要；续传所需的内容绑定由程序内部处理。续传只复用匹配本次传输身份的部分文件，不覆盖已完成目标；它不是任意远端文件的追加入口。网络中断后显式再次运行同一续传命令，不自动重放写入。
 
 ## 目标端长任务：jobs
 
-目标端先明确允许任务：`share --allow-jobs --output access.json`，或 `host @host.ticket --allow-jobs`。
+完整模式默认支持 jobs，普通 `share --output access.json` 或 `host @host.ticket` 即可；需要关闭时设置 `--allow-jobs=false`。
 
 ```sh
 shellpier jobs start target:lab --command 'make test' --operation-id build-001 --json
@@ -237,18 +246,18 @@ shellpier jobs cancel target:lab JOB_ID --json
 
 SSH 断开后任务继续，目标 host 停止或到期会取消任务；进程重启不恢复任务。提交响应丢失时，用 `jobs operation` 按原 operation ID 只读查询，取得 job ID 后读取状态和日志。同一 host 内保留完成记录，满表拒绝新增；相同 ID、相同内容的 start 返回原任务，不同内容拒绝。此去重不跨 host 重启，也不回滚 shell 副作用。
 
-## 本地端口转发
+## TCP 转发与反向转发
 
 ```sh
-# 目标端只允许这一精确目标地址
-shellpier share --allow-forward 127.0.0.1:8080 --output access.json
-# 控制端打印实际分配的本地端口，保持进程运行
+# 本地端口连接到目标端的服务
 shellpier forward @access.json --to 127.0.0.1:8080 --listen 127.0.0.1:0 --json
+# 目标端的 8080 端口连接到控制端的 3000 服务
+shellpier forward @access.json --reverse --listen 8080 --to 127.0.0.1:3000 --json
 ```
 
-`--allow-forward` 可重复，`host` 同样支持；目标 host 全局最多 8 条并发转发连接。控制端仅监听 loopback，`--timeout 0` 使用票据期限；停止进程会关闭转发。它承载 TCP，不自动发现目标服务或扩大允许范围。
+完整模式默认允许 TCP 转发，无需额外开关；转发连接与反向监听都有并发上限。监听仅限 loopback，端口 `0` 自动分配；`--timeout 0` 使用票据期限，停止进程关闭转发。需要精确限制正向目标时，在 share/host 设置可重复的 `--allow-forward HOST:PORT`。
 
-原生 OpenSSH 还可复用同一允许列表，例如 `ssh -F ./ssh-session/ssh_config -N -D 127.0.0.1:1080 shellpier` 提供本地 SOCKS 入口，或 `-L /tmp/new-private-dir/service.sock:127.0.0.1:8080` 使用本地 Unix socket。只允许访问 host 预先授权的精确 TCP 目标，后者须使用自己拥有的私有新目录。内置 `forward` 没有这两种入口；远端 Unix socket、反向监听和任意目标代理未实现。
+原生 OpenSSH 可使用 `-L`、`-D` 和标准 `-R`，例如 `ssh -F ./ssh-session/ssh_config -N -R 8080:127.0.0.1:3000 shellpier`。本地 Unix socket 入口也可使用 `-L /tmp/new-private-dir/service.sock:127.0.0.1:8080`；远端 Unix socket 监听未实现。
 
 ## Terminal 请求确认、等待与可选日志
 
@@ -284,8 +293,12 @@ shellpier service stop lab --json
 shellpier service uninstall lab --json
 ```
 
-`plan` 只输出计划，`install` 创建用户级配置但不立即启动；`start` 才启动当前会话。`--autostart` 显式选择以后登录时启动，不指定则不设置登录自启。`plan/install` 还接受 `--shell`、`--work-dir`、`--keep-awake`、`--allow-jobs`、`--access-mode`；所有动作支持 `--dry-run`、`--json` 和 `--config-dir`。
+`plan` 只输出计划，`install` 创建用户级配置但不立即启动；`start` 才启动当前会话。`--autostart` 显式选择以后登录时启动，不指定则不设置登录自启。`plan/install` 还接受 `--shell`、`--work-dir`、`--keep-awake`、`--allow-jobs=false`、`--root`、`--access-mode`；所有动作支持 `--dry-run`、`--json` 和 `--config-dir`。
 
 服务复用已有私有 host 票据，不创建或续期授权；有限票据仍会到期。start 校验安装时绑定的票据身份，换成另一会话 ID 后拒绝启动，需要显式卸载、重新安装。停止或卸载不删除票据；中继撤销未确认时用原 host 票据执行 `revoke`。这是当前用户的生命周期管理，不保证注销、睡眠或系统重启后的所有任务恢复。
 
 MCP 输出被截断时检查 `truncated`，不要把截断文本当完整结果。取消或超时不证明远端没有执行；任务提交返回 `outcome=unknown` 时保留原 operation ID，查询状态或用同 ID、同内容确认原提交，不生成新 ID 重放。
+
+### 文件目录边界
+
+`--root` 使用 Go `os.Root` 限制 SFTP 路径，不是 shell 或操作系统沙箱。现有指向 root 内部的相对符号链接可读取，不支持创建链接；特殊文件被拒绝。root 不隔离目录中已有的硬链接别名或挂载点。需要命令执行时使用默认完整模式。

@@ -34,7 +34,7 @@
 
 ## 执行与撤销
 
-会话默认 TTL 为 3 小时。当前版本提供当前用户的命令执行、SFTP 与 PTY；不提供桌面控制、系统用户切换或 PAM 登录。Unix 使用系统 PTY，Windows 使用 ConPTY；目标是否可用以 `capabilities` 返回为准，Legacy 不提供本项目的 PTY 入口。访问密钥授予该进程所属账户的执行能力，目录设置不是文件系统沙箱。
+会话默认 TTL 为 3 小时。当前版本提供当前用户的命令执行、SFTP 与 PTY；不提供桌面控制、系统用户切换或 PAM 登录。Unix 使用系统 PTY，Windows 使用 ConPTY；目标是否可用以 `capabilities` 返回为准，Legacy 不提供本项目的 PTY 入口。默认完整模式授予该进程所属账户的执行能力；`--work-dir` 只是起始目录。`--root DIR` 则自动切换为 SFTP 专用分享，路径从虚拟 `/` 开始，可加 `--access-mode sftp-readonly`。root 使用 Go `os.Root` 约束文件路径，不是 shell 或操作系统沙箱；已有硬链接别名、挂载点不被隔离。现有指向 root 内的相对符号链接可读，不支持创建符号链接，特殊文件被拒绝。
 
 `capabilities` 的 `pty_signals` 列出目标支持的信号。Windows 的 `INT` 向终端写入 Ctrl+C，由前台程序处理；`TERM` / `KILL` 终止受管理的 Job。普通 `exec` 不提供会话信号接口，可用超时或关闭连接结束。
 
@@ -50,14 +50,16 @@
 
 | 能力 | 有效范围与限制 |
 |---|---|
-| Jobs | host 须启用 `--allow-jobs`；跨 SSH 连接断开继续，host 退出或 TTL 到期结束；stdout/stderr ring 有界，cursor 可报告丢失字节 |
+| Jobs | 完整模式默认启用，可用 `--allow-jobs=false` 关闭；跨 SSH 连接断开继续，host 退出或 TTL 到期结束；stdout/stderr ring 有界，cursor 可报告丢失字节 |
 | Job/start 操作 ID | 同一 host manager 生命周期；完成记录不自动淘汰，默认任务总表 128、并发 4，满表拒绝新任务；同操作 ID 必须对应相同内容 |
 | Terminal write 操作 ID | 同一 worker 生命周期，最多 256 个；满表拒绝新增，worker 消失后不能用旧 ID 证明结果；wait 等整个终端结束 |
-| 递归/续传 | 递归支持排除与容量限制，续传为单文件；保持不覆盖，支持 checksum 与进度；owned partial/journal 明文保存内容或路径，失败不自动回滚已传文件 |
-| Forward | host 精确 `--allow-forward HOST:PORT`，控制端 loopback 监听；无 SOCKS、公开监听或反向转发；断线关闭，不重放数据 |
-| MCP | stdio 2026-07-28 / 2025-11-25 初始化；显式工具白名单，票据用 `@FILE` / `target:NAME` 引用；jobs start 必须有稳定 operation ID，不自动重放变更；无 Web 前端 |
+| 递归/续传 | 递归支持排除与容量限制，续传为单文件；默认不覆盖，`--skip-existing` 直接跳过已有普通文件，续传内部自动校验，支持进度；owned partial/journal 明文保存内容或路径，失败不自动回滚已传文件 |
+| Forward | 完整模式默认允许 TCP，`--allow-forward` 可选限制正向精确目标；支持本地与反向 loopback 监听、原生 OpenSSH `-L/-D/-R`；断线关闭，不重放数据 |
+| MCP | stdio 2026-07-28 无状态请求 / 2025-11-25 初始化；显式工具白名单，票据用 `@FILE` / `target:NAME` 引用；jobs start 必须有稳定 operation ID，不自动重放变更；无 Web 前端 |
 | Targets | 本地别名引用已有私有票据文件，不复制、不续期；移除别名不撤销远端访问 |
 | User service | Linux systemd user、macOS LaunchAgent、Windows 当前用户计划任务；注册与启动分开，可选登录自启；不做管理员或系统启动服务，不续期有限票据 |
+
+转发的高级容量边界：host 正向最多 8 条 stream；反向最多 8 个 listener 和 8 条 stream；同一 SSH 连接的并发 stream 还共享 8 条上限。它们不是所有方向合计只能使用 8 个资源，不需要用户另行配置这些配额。
 
 一次 SSH 调用取消与 host 生命周期不是同一边界：长任务须用 jobs 自己的 status/logs/wait/cancel 观察和结束。start 响应丢失时保留原操作 ID，先查询或用同 ID、同内容重试，不另造 ID 重复提交。日志、PTY 输出和传输进度均不代表命令级事务提交。
 
@@ -68,6 +70,10 @@
 正常完成校园认证门户登录。HTTP 可达不等于 WebSocket upgrade 或端到端 SSH 可用；TCP 443 上的原始 SSH 也不等于 HTTPS。不自动绕过 VPN、认证门户或组织网络规则，不自动部署用户现有服务器。
 
 ## 已测试范围
+
+`--root` 目录分享和反向转发纳入 Linux、macOS、Windows CI 的真实 SSH 测试与 race 检查；具体提交是否通过以对应工作流结果为准。本机 macOS 另验证了打包前的原生 CLI、OpenSSH/SFTP、MCP 和目录共享 LaunchAgent 生命周期。
+
+这些测试不代表最低系统版本或所有架构均已实机验证。
 
 项目测试覆盖 SSH 命令/SFTP、访问授权、连接撤销、TTL 和进程树清理；Windows 使用 Job Object，Unix 使用进程组。Legacy parser/COM mock 覆盖账户字段、失败处理、默认实例拒绝和二进制校验。
 

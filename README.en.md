@@ -33,7 +33,9 @@ On a network where the two computers can reach each other:
 
 On macOS/Linux, replace `.\shellpier.exe` with `./shellpier`. `access.json` grants access; share it only with the intended person or agent.
 
-For an interactive terminal, use `shellpier shell @access.json`. Agents can use `shellpier --json exec @access.json --command whoami` or `shellpier mcp serve`. Read-only file sharing, transfer plans/verification, background jobs, forwarding and user services are covered in the [command reference](docs/commands.md); discover interfaces with `shellpier --json schema`.
+For an interactive terminal, use `shellpier shell @access.json`. Agents can use `shellpier --json exec @access.json --command whoami` or `shellpier mcp serve`. Directory sharing, recursive transfers, background jobs, local/reverse forwarding and user services are covered in the [command reference](docs/commands.md); discover interfaces with `shellpier --json schema`.
+
+To share just one folder, add `--root DIR`. The peer gets file access inside that directory without setting up system accounts or an SSH service.
 
 Across NAT, including many campus and hotspot networks, configure your own or your team's [relay](docs/relay.md). See the [workflows](docs/workflows.md) for more examples.
 

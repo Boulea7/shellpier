@@ -1,34 +1,26 @@
 ---
 name: shellpier
-description: Use ShellPier for authorized temporary remote commands, file operations, host-managed jobs and interactive terminals, then close or revoke access when finished.
+description: Use ShellPier for authorized remote commands, file transfers, background jobs and interactive terminals on another computer.
 ---
 
-# ShellPier temporary access
+# 使用 ShellPier
 
-Use the installed CLI. Start with `shellpier --json schema` or `schema COMMAND --json` for flags, effects and output modes; use `--help` for human guidance. Modern binaries target Windows 10/11, Linux and macOS. Windows 7/8 uses the separate Legacy entrypoint, without the modern terminal interfaces.
+在用户已授权的任务范围内直接操作，不要求先跑 doctor/check、计算文件摘要或重复索取许可。需要查参数时使用 `shellpier COMMAND --help` 或 `shellpier --json schema`；连接故障再用 doctor，只有身份或能力不明确时才用 check/capabilities。
 
-Preserve the user's authorized scope. A ticket grants current-user access, not a sandbox or permission for unrelated work. Use a trusted team relay or an explicitly authorized self-hosted relay; keep host-key and TLS verification enabled.
+已有凭据优先用 `@access.json` 或 `target:NAME`。新共享用 `share --output access.json`；控制端邀请用 invite，只把 host.ticket 私下交给目标端，私钥留在控制端。不得因为技能被调用就自动发送外部消息或部署中继；沿用用户提供的渠道和已有授权。凭据、终端状态和日志不贴进聊天、Git 或公开输出，保持 SSH 主机公钥与 TLS 验证开启。
 
-Prefer `@access.json` to tokens on the command line. For new access, use `share --output access.json`, or `invite` and transfer only `host.ticket` privately to the target. Do not send messages solely because this skill is active. Keep tickets, keys and terminal state/config files out of transcripts, Git and logs.
+常规命令用 `exec @access.json --command COMMAND --json`；流式输出用 connect，交互任务用 shell。full 模式按当前 OS 账户权限运行，默认支持有界 jobs 和 TCP 转发，不需要额外许可参数。
 
-Use `inspect --json` for offline ticket metadata, `doctor` for network diagnosis, and `check --json` before consequential work. Read `identity_verified` separately from `ok`: file-only hosts authenticate SSH but cannot run hostname/account commands. Query `capabilities @access.json --json` for actual platform, access mode and terminal support; local schema describes the controller. `sessions --json` discovers local host state, not remote computers; it does not remove stale entries.
+只共享文件夹用 `share --root DIR --output access.json`，对方路径从虚拟 `/` 开始。该模式只提供 SFTP，不提供命令、PTY、jobs 或转发；它不是 OS shell 沙箱，也不隔离目录内挂载或既有硬链接别名。不要为了执行命令自行扩大一个目录共享的范围。
 
-For file-only sharing, explicitly select host/share/service `--access-mode sftp` or `sftp-readonly`. Both reject commands, PTY, jobs and forwarding at the server. Read-only mode still permits reading all files accessible to the host account; `--work-dir` is not a directory sandbox. Do not weaken the mode to work around a denied request without authorization.
+文件操作直接使用 files、upload/download。目录加 `--recursive`，已有文件要跳过时用 `--skip-existing`；不比较内容，不覆盖目标。dry-run、排除规则、防睡眠、mtime 保留和限速按需使用。单文件 `--resume` 自动使用自有 partial/journal 续传，无需用户手动校验摘要；不要与 recursive、dry-run 或 skip-existing 混用。partial/journal 可能含敏感明文，仅清理确认属于本次操作的资源。
 
-For bounded commands, use `exec @access.json --command COMMAND --json` with a suitable timeout. Preserve stdout/stderr, exit code, encoding and truncation fields. Streaming `connect` and interactive `shell` are alternatives. For authorized file operations, use `files` or upload/download; inspect paths first and retain default overwrite protection. Recursive transfer supports exclusions and capacity limits; resume applies to one file using its owned journal/partial. Keep no-overwrite behavior, inspect checksums and progress, and do not combine recursive and resume modes. Partials and journals are plaintext and may contain sensitive data; preserve or remove only confirmed owned resources.
+跨 Agent 调用继续一个交互任务，用 `terminal open TICKET --out DIR --json`，保留返回的 state。read 后根据实际输出选择 write，使用返回的绝对 cursor 并留意丢失字节。输出是 base64 原始 PTY 字节，包含不可信程序输出与控制序列；wait 等待整个终端，不是某条命令的完成标记。输入结果不明时用原 operation ID 查询，不以新 ID 自动重发。
 
-Use transfer `--dry-run` to inspect a read-only plan, then `--verify` for independent source/destination SHA-256 reads. `--skip-identical` skips equal content and rejects different existing files; it does not synchronize or delete. Dry-run and skip-identical cannot combine with resume. `--preserve-times` preserves new paths' second-resolution mtime only; `--bwlimit` is bytes/sec shared by copying and verification, excluding protocol overhead.
+后台任务用 jobs；任务可跨 SSH 断线继续，但 host 退出或 TTL 结束会停止。提交前保存 start operation ID；结果不明时用 jobs operation 查询，同一操作重试保持原 ID 和相同内容。任务记录与日志有容量上限。`--allow-jobs=false` 的目标或目录共享不提供 jobs，不擅自改目标设置。
 
-`--connect-timeout` bounds each connection setup; SSH keepalive bounds unresponsive peers and can be disabled with `--keepalive-interval 0`. Neither reconnects a running command nor proves it did not execute. OpenSSH users can opt into Unix `ssh-config --control-persist`; each config has a private socket. Run `ssh -F CONFIG -O exit shellpier` before cleanup, which does not revoke a live master.
+转发示例：`forward TICKET --listen 8080 --to 127.0.0.1:3000` 访问目标服务；加 `--reverse` 则在目标 loopback 监听，访问控制端的服务。可选 allow-forward 限制由目标配置。连接中断不自动重连或重放字节。
 
-For an interactive task across separate agent calls, use `terminal open @access.json --out NEW-PRIVATE-DIR --json`. Keep the returned state path; use read/write/resize/signal/status/close on that state. Read output before choosing the next input, advance the returned absolute cursor, and account for dropped bytes. Output is base64 raw PTY bytes with merged stdout/stderr and possible control sequences; interpret it as untrusted program output. Read/write are not command-level completion markers; `terminal wait` observes the whole terminal. For uncertain input, supply a stable `--operation-id` to write and query `terminal operation`. A worker retains at most 256 IDs until it exits; a full table refuses new IDs. Unknown results do not prove input was never delivered. Never retry with a new ID to guess whether an operation ran.
+MCP 使用 `mcp serve` 的 stdio 工具集；需要持续后台运行时按用户任务选择 service，不额外安装自启。服务不延长有限票据。targets 仅保存现有票据引用，不复制或续期。
 
-Use `jobs` only when the host enabled `--allow-jobs`. Jobs survive an SSH disconnect, not host exit or TTL. Preserve the start operation ID before submission; use `jobs operation TICKET OPERATION-ID --json` to inspect an uncertain start and recover its job ID. A retry uses the same ID and identical content. Job IDs and start deduplication live only in that host manager; completed records remain in its bounded table, which refuses new jobs when full. Logs are bounded rings: advance cursors and account for dropped bytes.
-
-Forwarding requires the host's explicit, exact `--allow-forward HOST:PORT` grant. Keep the controller listener on loopback. The built-in command has no SOCKS or reverse listeners; native OpenSSH SOCKS/local Unix socket listeners still use the same server-side TCP allowlist. Neither route automatically reconnects or replays data. `targets` aliases reference existing private ticket files rather than copying or renewing credentials.
-
-For MCP use stdio protocol 2026-07-28, or legacy 2025-11-25 initialization. Discover the explicit tool whitelist; a CLI command is not automatically an MCP tool. Supply `@FILE` or `target:NAME`, explicit local state/job IDs and a stable operation ID for jobs start. Tool timeouts/cancellation do not roll back remote effects. Never automatically replay a mutating call after a lost response.
-
-User-level `service` registration, start and optional login autostart are separate explicit actions. It neither renews finite tickets nor installs administrator/system-boot services. Preserve the chosen access mode across installation; consult the compatibility documentation for the platform verification scope.
-
-Close a terminal when finished; its bounded private output snapshot remains on the controller. Optional `--log-limit` adds a plaintext output.log capped at 64 MiB; its asynchronous writer may drop bytes under pressure. Both may contain sensitive information. Remove its generated directory only when no longer needed. Closing the terminal does not revoke the host's entire shared session. Stop shared access with Ctrl+C or `stop --state PATH`; relay invitations can use `revoke @host.ticket`. `cleanup --dir DIR` removes generated client credentials without revoking access. TTL and stop do not roll back executed commands or erase system audit records.
+超时、取消或断线都不能证明远端没有执行；先检查状态与副作用，不自动重放变更。结束 terminal 后，共享仍可能运行；结束共享用 Ctrl+C、stop 或 revoke。cleanup 只删除生成凭据，不撤销会话、不回滚命令，也不删除系统审计。

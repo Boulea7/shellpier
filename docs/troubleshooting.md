@@ -79,9 +79,9 @@
 | operation 缓存满 | 同一 worker 的 256 条记录不淘汰；已有 ID 仍可查询，新 ID 被拒绝；不要用重启来掩盖未知输入结果 |
 | terminal wait 返回 `closed=false` | 有界等待结束，终端可能仍运行；继续查询，不把输出安静当命令完成 |
 | `output.log` 比终端输出短 | 看 `log.truncated/error`；容量或慢盘会丢日志，但不阻塞 SSH；默认环形缓冲也只留最新 1 MiB |
-| jobs 功能被拒绝 | 目标端需显式 `--allow-jobs`；查询目标 capabilities；不能在客户端单方面开启 |
+| jobs 功能被拒绝 | 完整模式默认允许；查看是否设置 `--allow-jobs=false`，或使用了只分享文件的 root/受限模式 |
 | 断线后找不到 job | 任务仅跨 SSH 断线保留，不跨 host 停止、TTL 或进程重启恢复 |
-| forward 目标被拒绝 | `--to` 必须匹配 host 的显式 `--allow-forward HOST:PORT`；并发连接受 host 全局 8 槽限制 |
+| forward 目标被拒绝 | 完整模式默认允许；若 host 配置了 `--allow-forward` 限制，核对精确目标；并发连接受全局 8 槽限制 |
 | 续传拒绝目标或 journal | 保留部分文件与私有 journal 核对身份；不改写为强制覆盖；递归传输不能使用 resume |
 
 诊断输出只分享脱敏阶段信息。票据、终端状态 secret、日志与任务输出均可能包含敏感内容，不附入公开 Issue。
@@ -108,11 +108,13 @@
 | 服务端不支持保活请求 | SSH 请求返回 false 也算存活，不应因此关闭连接；不要将应用错误当作网络超时 |
 | check 成功但 identity_verified=false，或 doctor 身份阶段不可用 | 受限模式只完成 SSH 认证与能力广告，不运行身份命令；这不等于实际探测 SFTP，也不是整体连接失败 |
 | SFTP 能用而 exec/shell/jobs/forward 被拒绝 | 查看 `capabilities` 的 `access_mode`；目标选择非 full 模式时这是策略限制 |
-| sftp-readonly 仍能读取起始目录外文件 | 只读限制写入，不提供文件路径沙箱；读取范围仍由当前账户权限决定 |
-| skip-identical 遇到已有文件报错 | 只有 SHA256 相同才跳过；内容不同仍拒绝覆盖，先核对目标与源 |
-| verify 明显增加耗时 | 它读取源前后与目标内容；哈希和复制共享 `--bwlimit` 预算，进度速度不等于纯网络吞吐 |
-| dry-run/resume 参数冲突 | dry-run 不建立续传状态；单文件 resume 不能与 dry-run 或 skip-identical 合用 |
+| 只想分享一个目录 | 使用 `--root DIR`，不必同时设置访问模式；`--work-dir` 只是起始目录 |
+| 想保留已有文件继续传其他文件 | 使用 `--skip-existing`，已有普通文件直接跳过，不判断内容是否相同 |
+| dry-run/resume 参数冲突 | dry-run 不建立续传状态；单文件 resume 不能与 dry-run 或 skip-existing 合用 |
 | 传输后时间或权限不同 | preserve-times 仅新建文件/目录的秒级 mtime，不保留原 atime、权限或所有权 |
 | 使用 control-persist 后准备清理 | 先用原配置 `ssh -F PATH/ssh_config -O exit shellpier` 显式关闭后再清理；cleanup 不撤销、不杀不确定 master |
 
 保活、传输计划和连接复用不延长票据期限。保持原 operation ID 查询不确定的提交结果，不因连接关闭自动生成新的写入请求。
+
+
+`--root` 分享中远端路径以 `/` 为起点；不要再拼接目标端真实目录前缀。反向转发的 `--to` 是控制端地址，监听端口在目标端。目录边界的高级限制见[命令参考](commands.md#文件目录边界)。

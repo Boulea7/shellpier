@@ -145,7 +145,7 @@ Windows 7/8 请使用[独立 Legacy 指南](legacy-windows.md)，支持范围见
 
 ## 构建任务与终端上下文的选择
 
-希望断开控制端 SSH 后任务仍继续时，目标端启用 `--allow-jobs`，用 `jobs start → status/logs/wait → cancel`。保存 start 返回的任务 ID；重连后用 ID 查询，不重新提交命令。任务留在目标 host 内存中，host 停止、到期或重启都会结束这条生命周期。
+希望断开控制端 SSH 后任务仍继续时，目标端保持默认完整模式，用 `jobs start → status/logs/wait → cancel`。保存 start 返回的任务 ID；重连后用 ID 查询，不重新提交命令。任务留在目标 host 内存中，host 停止、到期或重启都会结束这条生命周期。
 
 需要 shell 上下文时使用 `terminal`：它由控制端 worker 保持 SSH，支持连续输入；`terminal wait` 只等待整个终端关闭。输入响应丢失时，使用原 `--operation-id` 查询；不要从“没收到响应”推断未执行。去重只覆盖同一活 worker，最多 256 条 ID。
 
@@ -170,18 +170,27 @@ MCP 客户端可启动 `shellpier mcp serve` 接入同一组有界工具。2026 
 只需提供文件读取时，目标端可直接限制入口：
 
 ```sh
-./shellpier share --access-mode sftp-readonly --output access.json
+./shellpier share --root ./shared --output access.json
 ```
 
-控制端仍可下载、列目录和校验文件；不能执行命令、打开 shell 或启动任务。只读模式限制操作类型，不限制可读路径，`--work-dir` 也不是沙箱。需要文件上传但不提供命令执行时选择 `--access-mode sftp`。
+控制端用 upload/download 或 SFTP 访问虚拟 `/` 中的文件；无需再指定访问模式。只允许下载时加 `--access-mode sftp-readonly`。此目录分享不提供命令执行、shell、jobs 或转发。
 
 对已有目标目录，先只读预检，再明确执行：
 
 ```sh
-./shellpier upload target:lab ./build remote-build --recursive --skip-identical --dry-run --json
-./shellpier upload target:lab ./build remote-build --recursive --skip-identical --verify --preserve-times --bwlimit 1048576 --json
+./shellpier upload target:lab ./build remote-build --recursive --skip-existing --dry-run --json
+./shellpier upload target:lab ./build remote-build --recursive --skip-existing --preserve-times --bwlimit 1048576 --json
 ```
 
-相同文件跳过，不同文件报错，不覆盖；预检本身不锁定后续目录内容。`--verify` 会增加源与目标读取，和复制共享带宽预算。`--preserve-times` 只保留秒级 mtime，不复制权限、所有权或原 atime。单文件 `--resume` 不与 dry-run 或 skip-identical 合用。
+已有普通文件直接跳过，不比较内容；默认仍拒绝覆盖。预检本身不锁定后续目录内容。`--preserve-times` 只保留秒级 mtime，不复制权限、所有权或原 atime。单文件 `--resume` 不与 dry-run 或 skip-existing 合用。
 
 SSH 默认每 15 秒探测存活，单次探测最多等 45 秒，单候选建连默认 10 秒。可按网络条件调整相应参数，关闭保活用 `--keepalive-interval 0`。探测失败会结束连接，不会重新执行命令；断线后先查询任务或终端结果，再决定下一步。外部 OpenSSH 连接复用与关闭步骤见[命令参考](commands.md#openssh-配置中的保活与连接复用)。
+
+
+## 把控制端开发服务临时提供给目标端
+
+```sh
+./shellpier forward @access.json --reverse --listen 8080 --to 127.0.0.1:3000 --json
+```
+
+目标端访问自己的 `127.0.0.1:8080`，连接会到达控制端的 `127.0.0.1:3000`。保持 forward 进程运行，结束时停止即可；默认完整模式不需要再配置允许开关。

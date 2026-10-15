@@ -2,32 +2,23 @@
 
 [简体中文](SECURITY.md) · English
 
-ShellPier provides temporary command execution with the target computer's current user permissions. Access files, tickets and private keys are credentials. Protect the relay creation key separately.
+ShellPier runs as the target's current user. Default full mode permits commands, file operations, bounded jobs and TCP forwarding. An access ticket grants the corresponding account capabilities. Keep tickets, private keys and relay creation keys private.
 
-## Report vulnerabilities privately
+## Reports and supported versions
 
-Use [GitHub private vulnerability reporting](https://github.com/Boulea7/shellpier/security/advisories/new) for suspected authentication bypass, credential leaks, host-key verification failures, unauthorized access or failed revocation. Keep exploit details out of public issues and pull requests.
+Use [GitHub private vulnerability reporting](https://github.com/Boulea7/shellpier/security/advisories/new) with the version, OS, redacted reproduction and impact, without live credentials. Fixes target the current development line and [latest alpha](https://github.com/Boulea7/shellpier/releases). See [compatibility](docs/compatibility.md) for platform scope.
 
-Include the affected version or commit, OS and architecture, a redacted reproduction, expected and actual behavior, and impact. Do not attach valid tickets, private keys, creation keys or identifying information about third parties. Use a dedicated local test environment when example credentials are needed.
+## Boundaries
 
-## Supported versions
-
-Security fixes target the current development branch and [latest alpha release](https://github.com/Boulea7/shellpier/releases). See [compatibility](docs/compatibility.md) for supported platforms.
-
-## Security boundaries
-
-- SSH encrypts command and file traffic end to end and pins the session host key. TLS protects connections to the relay. The relay can still observe connection metadata and interrupt service.
-- Access is not sandboxed. Commands inherit the current user's account and filesystem permissions; PAM is not used to switch users. The working directory does not restrict file access.
-- `--access-mode sftp` permits file operations only; `sftp-readonly` also rejects writes. Both modes reject commands, PTY, jobs and forwarding at the server. Reads still cover files accessible to the current account. Ticket fields and client capability hints do not replace server policy.
-- SSH keepalive detects an unresponsive peer; it does not replay commands or confirm uncertain outcomes. OpenSSH multiplexing is off by default and uses a private socket per ticket when enabled. Close the master before cleaning up its configuration; deleting files does not revoke an existing connection.
-- PTY output combines stdout and stderr and may contain terminal control sequences. Persistent `terminal` sessions keep state, configuration and a snapshot of up to 1 MiB of raw output in a private directory on the controller. Optional `--log-limit` adds a plaintext log capped at 64 MiB; a congested asynchronous writer may drop bytes. Snapshots and logs may contain sensitive information; remove owned files when no longer needed. `terminal wait` observes the whole terminal, not one command.
-- Host-managed jobs require explicit enablement. They survive SSH disconnects but end with the host process or TTL. Logs are bounded rings. Job IDs and start-operation deduplication live only in that host manager; completed records occupy its bounded table, which refuses new jobs when full. Terminal write IDs are retained for one worker lifetime, up to 256 IDs, then new IDs are refused. Unknown outcomes do not mean an operation never ran.
-- Recursive transfer retains exclusions, limits and no-overwrite protection. Resume uses owned partials/journals; checksums and progress do not provide rollback. Partials and journals are plaintext and may contain sensitive contents or paths.
-- Forwarding requires an exact host-side destination allowlist. The built-in command permits loopback listeners, without SOCKS, public listeners or reverse forwarding. Native OpenSSH SOCKS/local Unix socket listeners use the same server-side TCP allowlist; the caller configures their local binding. SSH loss closes forwarding without replaying bytes.
-- MCP exposes an explicit tool whitelist using ticket references and explicit state/job IDs; jobs start requires a stable operation ID. Stdio supports 2026-07-28 and legacy 2025-11-25 initialization, with no Web frontend. Unknown outcomes, timeouts and cancellation do not prove that remote work never ran; mutations are not automatically replayed.
-- Target aliases reference existing private ticket files without copying or renewing them. User-level service registration, start and optional login autostart are explicit actions. They do not elevate privileges, install system-boot services or renew finite tickets.
-- Creation keys, host tokens and client tokens serve different purposes. Do not interchange or publish them.
-- TTL and stop revoke this tool's resources. They do not undo executed commands or erase system or network audit records. A lost connection does not prove that a command was not executed; check its effects before retrying.
-- Crashes, SIGKILL or power loss may leave state and credentials behind. Unix child processes can escape the managed process group. Legacy expiration depends on Task Scheduler, power and the system clock. See [compatibility](docs/compatibility.md).
+- SSH encrypts command/file traffic end to end and pins the session host key. TLS protects relay connections. The relay sees connection metadata and can interrupt service.
+- Commands inherit the current OS account's permissions; `--work-dir` is not filesystem isolation. Jobs end with the host or TTL; `--allow-jobs=false` disables them. TCP forwarding needs no destination allowlist by default; `--allow-forward` is an optional restriction.
+- `--root DIR` automatically selects SFTP directory sharing with a virtual `/`; the server rejects exec, PTY, jobs and forwarding. It needs no administrator rights, but is not an OS shell sandbox and does not isolate mounts or existing hard-link aliases inside the directory. Optional read-only mode is available when writes must be disabled.
+- Local forwarding listens on the controller. Reverse forwarding listens on the target's loopback and reaches a controller-side service; standard SSH `-R` also works. Disconnects close forwarding without replaying data. Forwarded services retain their own authentication boundaries.
+- Transfers refuse overwrites by default. `--skip-existing` skips existing regular files without comparing contents. Resume uses owned partials/journals with internal source binding; failures may retain plaintext content and paths. Ordinary transfers make no additional SHA verification guarantee.
+- PTY output combines stdout/stderr and can contain control sequences. Terminal snapshots and optional logs live in a private controller directory and may contain sensitive data; closing does not remove them. `terminal wait` observes the whole terminal, not one command.
+- Job-start and terminal-write operation IDs deduplicate only within their manager/worker lifetime, with bounded records. An unknown outcome does not mean nothing ran. Inspect state and effects before retrying instead of guessing with a new ID.
+- MCP exposes an explicit tool set over stdio, with no Web frontend. Timeouts/cancellation do not roll back remote effects. Targets reference private tickets without copying or renewing them. User-level service registration and autostart are explicit actions; they do not elevate privileges or extend tickets.
+- OpenSSH multiplexing is off by default. Close an enabled master before removing its configuration. `cleanup` removes generated files without revoking existing connections; end sharing with Ctrl+C, stop or revoke. TTL does not undo commands or erase system/network audit records.
+- Crashes, SIGKILL or power loss can leave state and credentials. Unix children can escape managed process groups. Legacy expiration depends on Task Scheduler, power and clocks.
 
 For usage issues, see [SUPPORT](SUPPORT.md).

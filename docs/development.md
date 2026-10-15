@@ -9,7 +9,7 @@
 | `cmd/shellpier/main.go` | 信号取消、标准流、错误输出与退出码 |
 | `internal/cli` | 命令分发、机器接口、持久终端与会话生命周期 |
 | `internal/access` | 票据、SSH 连接、主机公钥校验与配置生成 |
-| `internal/sshd` | 当前用户 SSH exec、PTY/SFTP 与会话关闭 |
+| `internal/sshd` | 当前用户 SSH exec、PTY/SFTP、目录文件共享与转发 |
 | `internal/jobs` | host 生命周期内的有界任务、去重与输出缓冲 |
 | `internal/relay` | HTTPS/WSS、角色配对、认证、容量、TTL 与撤销 |
 | `internal/platform` | 文件权限、Unix PTY/Windows ConPTY、命令进程树与防睡眠 |
@@ -39,7 +39,9 @@ exec 保留 stdout/stderr、退出码和输出截断信息；shell 使用 PTY �
 
 ## 文件与平台行为
 
-写入功能明确覆盖政策，失败只清理本次创建且仍能确认归属的文件。传输实现参考 `transfer*.go`；本地路径用 `filepath`，远端路径遵循 SFTP 约定。续传 journal 绑定方向、主机公钥、规范路径和源内容，提交保持不覆盖；硬链接不可用时用独占复制并报告非原子可见。目录传输先检查容量、路径冲突和特殊文件。服务管理仅操作可验证归属的用户级资源，plan/dry-run 不修改状态。
+写入功能明确覆盖政策，失败只清理本次创建且仍能确认归属的文件。传输实现参考 `transfer*.go`；本地路径用 `filepath`，远端路径遵循 SFTP 约定。续传 journal 绑定方向、主机公钥、规范路径和源内容，提交保持不覆盖；硬链接不可用时用独占复制并报告非原子可见。目录传输先检查容量、路径冲突和特殊文件。普通传输直接复制，不增加全文件 hash 门槛；`--skip-existing` 跳过已有普通文件，不比较内容，结构冲突仍报错。仅续传在内部绑定原始来源与 partial，用户无需手动计算摘要。服务管理仅操作可验证归属的用户级资源，plan/dry-run 不修改状态。
+
+`--root DIR` 自动选择目录限定的 SFTP 模式，虚拟路径从 `/` 开始，同时关闭 exec、PTY、jobs 和转发。它不创建 OS shell 沙箱，不隔离目录内的挂载或既有硬链接别名。普通 full 模式默认提供有界 jobs 与 TCP 转发；可选参数用于有明确需要的限制，不在普通流程额外增加许可步骤。正向与反向转发复用 SSH 生命周期，连接中断不重放字节。
 
 OS 专有能力放在 `internal/platform` 或对应包的平台文件，通过 build tags 隔离。涉及服务、防火墙或防睡眠时明确权限、资源归属和恢复方式。Windows 命令测试包括首次启动、退出码与编码；Legacy 保持独立入口。
 
