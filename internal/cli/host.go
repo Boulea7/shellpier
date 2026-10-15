@@ -195,13 +195,12 @@ func validateHostOptions(o hostOptions) error {
 	if o.reconnectMin <= 0 || o.reconnectMax < o.reconnectMin || o.reconnectMax > 24*time.Hour {
 		return errors.New("reconnect-min must be positive; reconnect-max must be at least reconnect-min and at most 24h")
 	}
-	if mode != sshd.AccessFull {
-		return nil
+	if mode == sshd.AccessFull {
+		if _, err := platform.Command(o.shell, "", o.workdir); err != nil {
+			return err
+		}
 	}
-	if _, err := platform.Command(o.shell, "", o.workdir); err != nil {
-		return err
-	}
-	if o.workdir != "" {
+	if o.fileRoot == "" && o.workdir != "" {
 		info, err := os.Stat(o.workdir)
 		if err != nil {
 			return err
@@ -405,6 +404,12 @@ func serveHost(parent context.Context, h access.Ticket, a *access.Ticket, listen
 		if a != nil {
 			if o.output != "" {
 				fmt.Fprintln(stdout, "Access ticket:", o.output)
+			} else if mode != sshd.AccessFull {
+				remotePath := "."
+				if o.fileRoot != "" {
+					remotePath = "/"
+				}
+				fmt.Fprintf(stdout, "On your agent computer, run:\n  shellpier files list %s %s\n", encoded, remotePath)
 			} else {
 				fmt.Fprintf(stdout, "On your agent computer, run:\n  shellpier connect %s -- whoami\n", encoded)
 			}
