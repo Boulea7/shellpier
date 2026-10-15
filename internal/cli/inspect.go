@@ -156,12 +156,14 @@ func inspect(args []string, stdout, stderr io.Writer) error {
 }
 
 type checkResult struct {
-	OK            bool   `json:"ok"`
-	ID            string `json:"id,omitempty"`
-	Hostname      string `json:"hostname,omitempty"`
-	User          string `json:"user,omitempty"`
-	HostKeySHA256 string `json:"host_key_sha256,omitempty"`
-	Error         string `json:"error,omitempty"`
+	OK               bool   `json:"ok"`
+	IdentityVerified bool   `json:"identity_verified"`
+	AccessMode       string `json:"access_mode,omitempty"`
+	ID               string `json:"id,omitempty"`
+	Hostname         string `json:"hostname,omitempty"`
+	User             string `json:"user,omitempty"`
+	HostKeySHA256    string `json:"host_key_sha256,omitempty"`
+	Error            string `json:"error,omitempty"`
 }
 type identityOutput struct{ bytes.Buffer }
 
@@ -180,7 +182,7 @@ func readIdentity(client *ssh.Client, command string) (string, error) {
 	var out identityOutput
 	session.Stdout = &out
 	session.Stderr = io.Discard
-	if e = session.Run(command); e != nil {
+	if e = access.ConnectionError(client, session.Run(command)); e != nil {
 		return "", e
 	}
 	value := strings.TrimSpace(out.String())
@@ -210,6 +212,7 @@ func check(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	if err := retry.Validate(); err != nil {
 		return err
 	}
+	ctx = retry.Context(ctx)
 	result := checkResult{}
 	fail := func(message string, cause ...error) error {
 		result.Error = message
@@ -238,7 +241,7 @@ func check(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	result.HostKeySHA256 = summary.HostKeySHA256
 	runCtx, cancel := context.WithTimeout(ctx, *timeout)
 	defer cancel()
-	client, e := access.DialRetry(runCtx, ticket, *iface, *retry)
+	client, e := access.DialRetry(runCtx, ticket, *iface, retry.RetryOptions)
 	if e != nil {
 		if runCtx.Err() != nil {
 			return fail("SSH check timed out or was canceled", runCtx.Err())
@@ -246,6 +249,19 @@ func check(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		return fail("SSH check failed", e)
 	}
 	defer client.Close()
+	caps, supported, e := queryRemoteCapabilities(client)
+	if e != nil {
+		return fail("remote capability check failed", e)
+	}
+	result.AccessMode = caps.AccessMode
+	if supported && caps.AccessMode != "full" {
+		result.OK = true
+		if *asJSON {
+			return inspectionJSON(stdout, result)
+		}
+		_, e = fmt.Fprintf(stdout, "SSH authenticated.\nAccess mode: %s\nHost and user commands were not run; SFTP availability is advertised by the target.\nHost key: %s\n", result.AccessMode, result.HostKeySHA256)
+		return e
+	}
 	result.Hostname, e = readIdentity(client, "hostname")
 	if e != nil {
 		if runCtx.Err() != nil {
@@ -261,6 +277,7 @@ func check(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		return fail("remote account check failed", e)
 	}
 	result.OK = true
+	result.IdentityVerified = true
 	if *asJSON {
 		return inspectionJSON(stdout, result)
 	}

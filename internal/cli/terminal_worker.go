@@ -53,8 +53,16 @@ func (p *terminalSSHPeer) Signal(signal string) error {
 	return nil
 }
 func (p *terminalSSHPeer) Close() error { return errors.Join(p.session.Close(), p.client.Close()) }
-func (p *terminalSSHPeer) Wait() error  { return p.session.Wait() }
+func (p *terminalSSHPeer) Wait() error  { return access.ConnectionError(p.client, p.session.Wait()) }
 func terminalSSHConnect(ctx context.Context, state terminalState, config terminalConfig, ring io.Writer) (terminalPeer, error) {
+	connection := access.DefaultConnectionOptions()
+	if config.Connection != nil {
+		connection = *config.Connection
+	}
+	if err := connection.Validate(); err != nil {
+		return nil, err
+	}
+	ctx = access.WithConnectionOptions(ctx, connection)
 	client, err := access.DialRetry(ctx, config.Ticket, config.Interface, config.Retry)
 	if err != nil {
 		return nil, err
@@ -127,6 +135,11 @@ func terminalServeEntry(parent context.Context, args []string, stdin io.Reader, 
 	var config terminalConfig
 	if json.Unmarshal(data, &config) != nil {
 		return errors.New("invalid terminal worker configuration")
+	}
+	if config.Connection != nil {
+		if err = config.Connection.Validate(); err != nil {
+			return err
+		}
 	}
 	if err = config.Ticket.Validate("access"); err != nil {
 		return err

@@ -19,7 +19,7 @@ func transfer(parent context.Context, command string, args []string, stdout, std
 	return transferWithProgress(parent, command, args, stdout, stderr, stderr)
 }
 
-func transferWithProgress(parent context.Context, command string, args []string, stdout, stderr, progressWriter io.Writer) error {
+func transferWithProgress(parent context.Context, command string, args []string, stdout, stderr, progressWriter io.Writer) (returnErr error) {
 	f := flags(command, stderr)
 	retry := clientRetryFlags(f)
 	iface := f.String("interface", "", "direct network interface")
@@ -51,6 +51,7 @@ func transferWithProgress(parent context.Context, command string, args []string,
 	if err := retry.Validate(); err != nil {
 		return err
 	}
+	parent = retry.Context(parent)
 	ticket, err := access.Read(positional[0])
 	if err != nil {
 		return err
@@ -60,11 +61,12 @@ func transferWithProgress(parent context.Context, command string, args []string,
 	}
 	ctx, cancel := context.WithTimeout(parent, *timeout)
 	defer cancel()
-	client, err := access.DialRetry(ctx, ticket, *iface, *retry)
+	client, err := access.DialRetry(ctx, ticket, *iface, retry.RetryOptions)
 	if err != nil {
 		return err
 	}
 	defer client.Close()
+	defer func() { returnErr = access.ConnectionError(client, returnErr) }()
 	sf, err := sftp.NewClient(client)
 	if err != nil {
 		return err

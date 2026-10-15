@@ -48,6 +48,7 @@ func featureCommandSpecs() []commandSpec {
 		flags := specFlags(jsonSpecFlag, []flagSpec{specFlag("config-dir", "string", "", "Private configuration directory"), specFlag("dry-run", "bool", "false", "Describe without modifying files or manager state")})
 		effects := []string{"local_read"}
 		if action == "plan" || action == "install" {
+			flags = append(flags, specFlag("access-mode", "string", "full", "full, sftp, or sftp-readonly; restricted modes disable commands and forwarding"))
 			flags = append(flags, specFlag("ticket", "string", "", "Existing host ticket file or target:NAME"), specFlag("autostart", "bool", "false", "Opt into startup at user login; install does not start now"), specFlag("shell", "string", "auto", "Target shell"), specFlag("work-dir", "string", "", "Remote starting directory"), specFlag("keep-awake", "bool", "false", "Inhibit sleep while host runs"), specFlag("allow-jobs", "bool", "false", "Enable host-managed jobs"), specFlag("allow-forward", "string[]", "", "Repeatable exact allowed HOST:PORT"))
 		}
 		if action != "plan" && action != "status" {

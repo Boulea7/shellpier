@@ -27,6 +27,7 @@ import (
 )
 
 type hostOptions struct {
+	accessMode   string
 	awake        bool
 	shell        string
 	workdir      string
@@ -57,6 +58,7 @@ func (targets *forwardTargets) Set(value string) error {
 }
 
 func hostFeatureFlags(f *flag.FlagSet, o *hostOptions) {
+	f.StringVar(&o.accessMode, "access-mode", "full", "full, sftp, or sftp-readonly; file modes reject commands and forwarding")
 	f.BoolVar(&o.allowJobs, "allow-jobs", false, "allow bounded jobs to continue after SSH disconnects")
 	f.IntVar(&o.maxJobs, "max-jobs", 128, "host-lifetime job capacity including completed jobs; 1..1024")
 	f.IntVar(&o.maxRunning, "max-running-jobs", 4, "concurrent jobs; 1..64 and no more than max-jobs")
@@ -162,6 +164,9 @@ func host(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 }
 
 func validateHostOptions(o hostOptions) error {
+	if _, err := validateHostAccessMode(o.accessMode, o.allowJobs, o.forwardTo); err != nil {
+		return err
+	}
 	if o.allowJobs || o.maxJobs != 0 || o.maxRunning != 0 || o.jobLogLimit != 0 {
 		if o.maxJobs < 1 || o.maxJobs > 1024 || o.maxRunning < 1 || o.maxRunning > 64 || o.maxRunning > o.maxJobs || o.jobLogLimit < 1024 || o.jobLogLimit > 16<<20 {
 			return errors.New("invalid job limits; consult host help")
@@ -190,6 +195,17 @@ func validateHostOptions(o hostOptions) error {
 	return nil
 }
 
+func validateHostAccessMode(value string, allowJobs bool, forward []string) (sshd.AccessMode, error) {
+	mode, err := sshd.ParseAccessMode(value)
+	if err != nil {
+		return "", err
+	}
+	if mode != sshd.AccessFull && (allowJobs || len(forward) > 0) {
+		return "", errors.New("restricted access-mode requires allow-jobs and allow-forward to be disabled")
+	}
+	return mode, nil
+}
+
 type localState struct {
 	Version    int       `json:"version"`
 	Kind       string    `json:"kind"`
@@ -201,6 +217,10 @@ type localState struct {
 }
 
 func serveHost(parent context.Context, h access.Ticket, a *access.Ticket, listener net.Listener, o hostOptions, stdout, stderr io.Writer) (result error) {
+	mode, err := validateHostAccessMode(o.accessMode, o.allowJobs, o.forwardTo)
+	if err != nil {
+		return err
+	}
 	ctx, cancel := context.WithCancel(parent)
 	if !h.ExpiresAt.IsZero() {
 		cancel()
@@ -227,7 +247,7 @@ func serveHost(parent context.Context, h access.Ticket, a *access.Ticket, listen
 	if err != nil {
 		return errors.New("invalid authorized public key")
 	}
-	server := &sshd.Server{Signer: signer, AuthorizedKey: public, Shell: o.shell, WorkDir: o.workdir}
+	server := &sshd.Server{Signer: signer, AuthorizedKey: public, Shell: o.shell, WorkDir: o.workdir, AccessMode: mode}
 	if o.allowJobs {
 		options := jobs.DefaultOptions()
 		options.Shell, options.WorkDir = o.shell, o.workdir

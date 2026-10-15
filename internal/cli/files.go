@@ -101,6 +101,7 @@ func files(parent context.Context, args []string, stdin io.Reader, stdout, stder
 	if err := retry.Validate(); err != nil {
 		return err
 	}
+	parent = retry.Context(parent)
 	ticket, err := access.Read(f.Arg(0))
 	if err != nil {
 		return err
@@ -115,11 +116,12 @@ func files(parent context.Context, args []string, stdin io.Reader, stdout, stder
 			result = ctx.Err()
 		}
 	}()
-	client, err := access.DialRetry(ctx, ticket, *iface, *retry)
+	client, err := access.DialRetry(ctx, ticket, *iface, retry.RetryOptions)
 	if err != nil {
 		return err
 	}
 	defer client.Close()
+	defer func() { result = access.ConnectionError(client, result) }()
 	sf, err := sftp.NewClient(client)
 	if err != nil {
 		return err

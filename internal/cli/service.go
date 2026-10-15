@@ -31,6 +31,7 @@ type serviceManifest struct {
 	Program      string   `json:"program"`
 	TicketFile   string   `json:"ticket_file"`
 	Shell        string   `json:"shell"`
+	AccessMode   string   `json:"access_mode,omitempty"`
 	WorkDir      string   `json:"work_dir,omitempty"`
 	KeepAwake    bool     `json:"keep_awake"`
 	Autostart    bool     `json:"autostart"`
@@ -100,12 +101,14 @@ func serviceWith(ctx context.Context, args []string, stdout, stderr io.Writer, e
 	machine := f.Bool("json", false, "emit reviewable service metadata")
 	dry := f.Bool("dry-run", false, "describe without changing files or service state")
 	var ticketValue, workdirValue string
+	accessMode := "full"
 	shellValue := "auto"
 	var autostartValue, awakeValue, allowJobsValue bool
 	ticket, workdir, shell := &ticketValue, &workdirValue, &shellValue
 	autostart, awake, allowJobs := &autostartValue, &awakeValue, &allowJobsValue
 	var forwards serviceStrings
 	if action == "plan" || action == "install" {
+		f.StringVar(&accessMode, "access-mode", "full", "full, sftp, or sftp-readonly; restricted modes disable commands and forwarding")
 		f.StringVar(ticket, "ticket", "", "existing private host ticket file or target:NAME")
 		f.BoolVar(autostart, "autostart", false, "start at future user logins; install does not start now")
 		f.StringVar(shell, "shell", "auto", "auto, sh, cmd or powershell")
@@ -131,6 +134,9 @@ func serviceWith(ctx context.Context, args []string, stdout, stderr io.Writer, e
 	manifestPath := filepath.Join(dir, "manifest.json")
 	var manifest serviceManifest
 	if action == "plan" || action == "install" {
+		if _, err = validateHostAccessMode(accessMode, *allowJobs, forwards); err != nil {
+			return err
+		}
 		switch *shell {
 		case "auto", "sh", "cmd", "powershell":
 		default:
@@ -183,6 +189,7 @@ func serviceWith(ctx context.Context, args []string, stdout, stderr io.Writer, e
 			return e
 		}
 		manifest.TicketID = hostTicket.ID
+		manifest.AccessMode = accessMode
 		manifest.AllowJobs = *allowJobs
 		manifest.AllowForward = forwards
 		manifest.Resource = serviceResource(env, manifest.Name, manifest.Autostart, dir)
@@ -458,6 +465,9 @@ func serviceResource(env serviceEnvironment, name string, autostart bool, dir st
 }
 func serviceArgs(m serviceManifest) []string {
 	args := []string{"host", "@" + m.TicketFile, "--shell", m.Shell}
+	if m.AccessMode != "" && m.AccessMode != string(sshd.AccessFull) {
+		args = append(args, "--access-mode", m.AccessMode)
+	}
 	if m.WorkDir != "" {
 		args = append(args, "--work-dir", m.WorkDir)
 	}
@@ -578,6 +588,9 @@ func readServiceManifest(path string, env serviceEnvironment, name string) (serv
 	}
 	if json.Unmarshal(data, &m) != nil || m.Version != 1 || m.Name != name || m.OS != env.os || len(m.Marker) != 32 || m.Resource != serviceResource(env, name, m.Autostart, filepath.Dir(path)) || m.Registration != filepath.Join(filepath.Dir(path), "registration"+serviceExtension(env.os)) || !filepath.IsAbs(m.Program) || !filepath.IsAbs(m.TicketFile) {
 		return m, errors.New("invalid service ownership manifest")
+	}
+	if _, err := validateHostAccessMode(m.AccessMode, m.AllowJobs, m.AllowForward); err != nil {
+		return m, errors.New("invalid service access policy")
 	}
 	return m, nil
 }

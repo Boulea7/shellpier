@@ -41,6 +41,7 @@ func shell(ctx context.Context, args []string, stdin io.Reader, stdout, stderr i
 	if err := retry.Validate(); err != nil {
 		return err
 	}
+	ctx = retry.Context(ctx)
 	fd, hasFD := streamFD(stdin)
 	isTerminal := hasFD && term.IsTerminal(fd)
 	if !*noRaw && !isTerminal {
@@ -58,7 +59,7 @@ func shell(ctx context.Context, args []string, stdin io.Reader, stdout, stderr i
 		ctx, cancel = context.WithTimeout(ctx, *timeout)
 		defer cancel()
 	}
-	client, err := access.DialRetry(ctx, ticket, *iface, *retry)
+	client, err := access.DialRetry(ctx, ticket, *iface, retry.RetryOptions)
 	if err != nil {
 		return err
 	}
@@ -135,7 +136,7 @@ func shell(ctx context.Context, args []string, stdin io.Reader, stdout, stderr i
 			}
 		}()
 	}
-	err = session.Wait()
+	err = access.ConnectionError(client, session.Wait())
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/Boulea7/shellpier/internal/access"
@@ -14,7 +15,7 @@ import (
 
 func connect(ctx context.Context, mode string, args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 	f := flags(mode, stderr)
-	var retry *access.RetryOptions
+	var retry *clientConnectionOptions
 	if mode != "proxy" {
 		retry = clientRetryFlags(f)
 	}
@@ -57,6 +58,7 @@ func connect(ctx context.Context, mode string, args []string, stdin io.Reader, s
 	if err := retry.Validate(); err != nil {
 		return err
 	}
+	ctx = retry.Context(ctx)
 	if separated && f.NArg() != 1 {
 		return errors.New("provide one ticket before -- and the remote command after it")
 	}
@@ -82,7 +84,7 @@ func connect(ctx context.Context, mode string, args []string, stdin io.Reader, s
 		ctx, cancel = context.WithTimeout(ctx, timeout)
 		defer cancel()
 	}
-	client, err := access.DialRetry(ctx, t, *iface, *retry)
+	client, err := access.DialRetry(ctx, t, *iface, retry.RetryOptions)
 	if err != nil {
 		return err
 	}
@@ -100,7 +102,7 @@ func connect(ctx context.Context, mode string, args []string, stdin io.Reader, s
 	}
 	session.Stdin, session.Stdout, session.Stderr = stdin, stdout, stderr
 	if !asJSON {
-		err := session.Run(command)
+		err := access.ConnectionError(client, session.Run(command))
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
@@ -108,7 +110,7 @@ func connect(ctx context.Context, mode string, args []string, stdin io.Reader, s
 	}
 	out, diagnostic := &limitedCapture{limit: maxOutput}, &limitedCapture{limit: maxOutput}
 	session.Stdout, session.Stderr = out, diagnostic
-	err = session.Run(command)
+	err = access.ConnectionError(client, session.Run(command))
 	if ctx.Err() != nil {
 		err = ctx.Err()
 	}
@@ -125,6 +127,10 @@ func sshConfig(args []string, stdout, stderr io.Writer) error {
 	f := flags("ssh-config", stderr)
 	dir := f.String("out", "", "new private output directory")
 	asJSON := f.Bool("json", false, "emit generated SSH configuration paths")
+	options := access.DefaultSSHConfigOptions()
+	f.DurationVar(&options.ServerAliveInterval, "server-alive-interval", options.ServerAliveInterval, "OpenSSH alive probe interval in whole seconds; 0 disables")
+	f.IntVar(&options.ServerAliveCountMax, "server-alive-count-max", options.ServerAliveCountMax, "maximum unanswered OpenSSH alive probes")
+	f.DurationVar(&options.ControlPersist, "control-persist", options.ControlPersist, "optional Unix private connection reuse lifetime; 0 disables")
 	if err := parseFlags(f, args); err != nil {
 		return err
 	}
@@ -136,6 +142,9 @@ func sshConfig(args []string, stdout, stderr io.Writer) error {
 	if ticketArg == "" || *dir == "" {
 		return errors.New("usage: shellpier ssh-config TICKET --out NEW-DIRECTORY")
 	}
+	if err := options.Validate(*dir); err != nil {
+		return err
+	}
 	t, err := access.Read(ticketArg)
 	if err != nil {
 		return err
@@ -144,12 +153,16 @@ func sshConfig(args []string, stdout, stderr io.Writer) error {
 	if err != nil {
 		return err
 	}
-	path, err := access.WriteConfig(t, *dir, exe)
+	path, err := access.WriteConfigWithOptions(t, *dir, exe, options)
 	if err != nil {
 		return err
 	}
 	if *asJSON {
-		return json.NewEncoder(stdout).Encode(map[string]any{"config": path, "host": "shellpier"})
+		metadata := map[string]any{"config": path, "host": "shellpier", "control_persist": options.ControlPersist.String()}
+		if options.ControlPersist > 0 {
+			metadata["control_path"] = filepath.Join(filepath.Dir(path), "control.sock")
+		}
+		return json.NewEncoder(stdout).Encode(metadata)
 	}
 	fmt.Fprintf(stdout, "SSH config: %s\nUse: ssh -F %s shellpier whoami\n", path, displayArg(path))
 	return nil

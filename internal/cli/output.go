@@ -10,6 +10,7 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/Boulea7/shellpier/internal/access"
 	"github.com/Boulea7/shellpier/internal/platform"
 	"github.com/Boulea7/shellpier/internal/relay"
 )
@@ -97,6 +98,9 @@ func classifyJSONError(err error) jsonErrorDetail {
 		result.Code = "remote_exit"
 		result.Message = "Remote command returned a nonzero exit status."
 		result.RemoteExitCode = &code
+	case errors.Is(err, access.ErrKeepaliveTimeout):
+		result.Code = "connection_lost"
+		result.Message = "SSH peer stopped responding. Remote effects may be unknown; inspect state before retrying."
 	case errors.Is(err, os.ErrPermission):
 		result.Code = "permission"
 		result.Message = "Access was denied."

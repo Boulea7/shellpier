@@ -40,11 +40,15 @@ func specFlags(groups ...[]flagSpec) []flagSpec {
 var jsonSpecFlag = []flagSpec{specFlag("json", "bool", "false", "Emit machine-readable output; global JSON errors use stderr")}
 var interfaceSpecFlag = []flagSpec{specFlag("interface", "string", "", "Direct network interface; platform support varies")}
 var retrySpecFlags = []flagSpec{
+	specFlag("connect-timeout", "duration", "10s", "Maximum connection setup time per attempt"),
+	specFlag("keepalive-interval", "duration", "15s", "SSH probe interval; zero disables end-to-end probes"),
+	specFlag("keepalive-timeout", "duration", "45s", "Maximum wait for one SSH keepalive reply"),
 	specFlag("retries", "int", "2", "Connection retries before remote work; never replay operations"),
 	specFlag("retry-min", "duration", "200ms", "Initial connection retry delay"),
 	specFlag("retry-max", "duration", "3s", "Maximum connection retry delay"),
 }
 var hostSpecFlags = []flagSpec{
+	specFlag("access-mode", "string", "full", "full, sftp, or sftp-readonly; restricted modes reject commands, jobs and forwarding"),
 	specFlag("keep-awake", "bool", "false", "Temporarily inhibit automatic sleep"),
 	specFlag("shell", "string", "auto", "Target shell: auto, powershell, cmd, sh"),
 	specFlag("work-dir", "string", "", "Remote starting directory"),
@@ -85,7 +89,7 @@ func buildCommandSpecs() []commandSpec {
 		command("connect", "Run a remote command; default whoami", "connect [flags] TICKET -- COMMAND", "stream", "remote streams or bounded JSON capture", remote, execSpecFlags),
 		command("exec", "Run an explicit remote command", "exec [flags] TICKET -- COMMAND", "stream", "remote streams or bounded JSON capture", remote, execSpecFlags),
 		command("proxy", "Transport bytes for OpenSSH ProxyCommand", "proxy [flags] TICKET", "binary", "SSH transport bytes", []string{"network"}, interfaceSpecFlag),
-		command("ssh-config", "Write an isolated pinned SSH configuration", "ssh-config TICKET --out DIR", "metadata", "generated SSH config path", write, []flagSpec{specFlag("out", "string", "", "New private output directory")}),
+		command("ssh-config", "Write an isolated pinned SSH configuration", "ssh-config TICKET --out DIR [flags]", "metadata", "generated SSH config path and optional private control socket path", write, []flagSpec{specFlag("out", "string", "", "New private output directory"), specFlag("server-alive-interval", "duration", "15s", "OpenSSH encrypted keepalive interval; whole seconds, zero disables"), specFlag("server-alive-count-max", "int", "3", "OpenSSH maximum unanswered keepalive probes"), specFlag("control-persist", "duration", "0s", "Unix OpenSSH idle reuse time; zero disables, 1s..1h in whole seconds")}),
 		command("doctor", "Inspect local configuration and optional target connectivity", "doctor [flags]", "metadata", "local diagnostics and target stages; relay health is not SSH proof", []string{"local_read", "optional_network", "optional_remote_exec"}, specFlags(jsonSpecFlag, interfaceSpecFlag, retrySpecFlags, []flagSpec{specFlag("relay", "string", "", "Relay health URL; environment may supply default"), specFlag("target", "string", "", "Ticket reference for SSH, identity and capability checks"), specFlag("timeout", "duration", "20s", "Total target diagnostic timeout")})),
 		command("status", "Inspect one local running session", "status --state FILE", "metadata", "local control status JSON", []string{"local_read", "loopback_control"}, []flagSpec{specFlag("state", "string", "", "Private state.json path")}),
 		command("stop", "Stop one local session", "stop --state FILE", "metadata", "stop confirmation", []string{"local_read", "loopback_control", "revoke"}, []flagSpec{specFlag("state", "string", "", "Private state.json path")}),

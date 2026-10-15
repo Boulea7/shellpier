@@ -38,6 +38,7 @@ func doctor(ctx context.Context, args []string, stdout, stderr io.Writer) error 
 	if err := retry.Validate(); err != nil {
 		return err
 	}
+	ctx = retry.Context(ctx)
 	identity, identityErr := platform.Identity()
 	if identityErr != nil {
 		identity = "unavailable"
@@ -63,7 +64,7 @@ func doctor(ctx context.Context, args []string, stdout, stderr io.Writer) error 
 	var targetErr error
 	if *target != "" {
 		targetCtx, cancel := context.WithTimeout(ctx, *timeout)
-		report.Target, targetErr = diagnoseTarget(targetCtx, *target, *iface, *retry)
+		report.Target, targetErr = diagnoseTarget(targetCtx, *target, *iface, retry.RetryOptions)
 		cancel()
 	}
 	if *asJSON {
@@ -101,9 +102,9 @@ type doctorStage struct {
 
 func diagnoseTarget(ctx context.Context, input, iface string, retry access.RetryOptions) ([]doctorStage, error) {
 	stages := []doctorStage{}
-	fail := func(stage, code string) ([]doctorStage, error) {
+	fail := func(stage, code string, cause ...error) ([]doctorStage, error) {
 		stages = append(stages, doctorStage{stage, false, code})
-		return stages, fmt.Errorf("target diagnostic failed at %s: %s", stage, code)
+		return stages, errors.Join(append([]error{fmt.Errorf("target diagnostic failed at %s: %s", stage, code)}, cause...)...)
 	}
 	ticket, err := access.Read(input)
 	if err != nil {
@@ -116,31 +117,35 @@ func diagnoseTarget(ctx context.Context, input, iface string, retry access.Retry
 	client, err := access.DialRetry(ctx, ticket, iface, retry)
 	if err != nil {
 		if ctx.Err() != nil {
-			return fail("ssh", "canceled_or_timeout")
+			return fail("ssh", "canceled_or_timeout", ctx.Err())
 		}
-		return fail("ssh", "connection_or_authentication_failed")
+		return fail("ssh", "connection_or_authentication_failed", err)
 	}
 	defer client.Close()
 	stages = append(stages, doctorStage{"ssh", true, "authenticated"})
-	if _, err = readIdentity(client, "hostname"); err != nil {
-		return fail("identity", "hostname_failed")
-	}
-	if _, err = readIdentity(client, "whoami"); err != nil {
-		return fail("identity", "account_failed")
-	}
-	stages = append(stages, doctorStage{"identity", true, "verified"})
 	ok, data, err := client.SendRequest("capabilities@shellpier", true, nil)
 	if err != nil {
-		return fail("capabilities", "request_failed")
+		return fail("capabilities", "request_failed", err)
 	}
 	if !ok {
 		return fail("capabilities", "unsupported")
 	}
 	var result remoteCapabilities
-	if len(data) > 4096 || json.Unmarshal(data, &result) != nil || result.Protocol != 1 || !capabilityName(result.OS) || !capabilityName(result.Arch) || !capabilityName(result.Shell) {
+	if len(data) > 4096 || json.Unmarshal(data, &result) != nil || validateRemoteCapabilities(&result) != nil {
 		return fail("capabilities", "invalid_response")
 	}
 	stages = append(stages, doctorStage{"capabilities", true, "advertised"})
+	if result.AccessMode != "full" {
+		stages = append(stages, doctorStage{"identity", false, "not_available_in_access_mode"})
+		return stages, nil
+	}
+	if _, err = readIdentity(client, "hostname"); err != nil {
+		return fail("identity", "hostname_failed", err)
+	}
+	if _, err = readIdentity(client, "whoami"); err != nil {
+		return fail("identity", "account_failed", err)
+	}
+	stages = append(stages, doctorStage{"identity", true, "verified"})
 	return stages, nil
 }
 

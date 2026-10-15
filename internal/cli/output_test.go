@@ -12,6 +12,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Boulea7/shellpier/internal/access"
 	"github.com/Boulea7/shellpier/internal/platform"
 	"github.com/Boulea7/shellpier/internal/relay"
 )
@@ -24,7 +25,7 @@ func TestJSONErrorCategoriesAndCause(t *testing.T) {
 	cases := []struct {
 		err  error
 		code string
-	}{{&UsageError{errors.New("private arguments")}, "usage"}, {context.Canceled, "canceled"}, {context.DeadlineExceeded, "timeout"}, {testRemoteExit(42), "remote_exit"}, {os.ErrPermission, "permission"}, {os.ErrNotExist, "not_found"}, {&net.OpError{Op: "dial", Err: errors.New("private address")}, "connection"}, {relay.ErrUnauthorized, "authentication"}, {platform.ErrTerminalUnsupported, "unsupported"}, {errors.New("private internal detail"), "internal"}}
+	}{{&UsageError{errors.New("private arguments")}, "usage"}, {context.Canceled, "canceled"}, {context.DeadlineExceeded, "timeout"}, {testRemoteExit(42), "remote_exit"}, {os.ErrPermission, "permission"}, {os.ErrNotExist, "not_found"}, {&net.OpError{Op: "dial", Err: errors.New("private address")}, "connection"}, {errors.Join(access.ErrKeepaliveTimeout, io.EOF), "connection_lost"}, {relay.ErrUnauthorized, "authentication"}, {platform.ErrTerminalUnsupported, "unsupported"}, {errors.New("private internal detail"), "internal"}}
 	for _, tc := range cases {
 		t.Run(tc.code, func(t *testing.T) {
 			cause := fmt.Errorf("sensitive wrapper: %w", tc.err)
@@ -116,5 +117,16 @@ func TestUnknownJobSubmissionJSONPreservesIdentityAndCause(t *testing.T) {
 	code := uint32(7)
 	if ExitCode(&ReportedError{Err: &JobExitError{State: "failed", Code: &code}}) != 7 {
 		t.Fatal("job failure lost its exit code")
+	}
+}
+
+func TestKeepaliveErrorPreservesUnknownJobOutcome(t *testing.T) {
+	err := &JobStartUnknownError{OperationID: "build-keepalive", Err: access.ErrKeepaliveTimeout}
+	result := classifyJSONError(err)
+	if result.Code != "outcome_unknown" || result.OperationID != "build-keepalive" || result.Outcome != "unknown" {
+		t.Fatalf("lost job submission uncertainty: %+v", result)
+	}
+	if ExitCode(err) != 1 {
+		t.Fatal("connection loss must not resemble a confirmed remote exit")
 	}
 }

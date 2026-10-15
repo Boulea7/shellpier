@@ -58,6 +58,7 @@ func jobsCommand(parent context.Context, args []string, stdout, stderr io.Writer
 	if err := retry.Validate(); err != nil {
 		return err
 	}
+	parent = retry.Context(parent)
 	if *timeout < time.Millisecond || *timeout > 7*24*time.Hour {
 		return errors.New("timeout must be between 1ms and 168h")
 	}
@@ -116,7 +117,7 @@ func jobsCommand(parent context.Context, args []string, stdout, stderr io.Writer
 	}
 	ctx, cancel := context.WithTimeout(parent, clientTimeout)
 	defer cancel()
-	client, err := access.DialRetry(ctx, ticket, *iface, *retry)
+	client, err := access.DialRetry(ctx, ticket, *iface, retry.RetryOptions)
 	if err != nil {
 		return err
 	}

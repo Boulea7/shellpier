@@ -10,9 +10,12 @@ import (
 	"time"
 
 	"github.com/Boulea7/shellpier/internal/access"
+	"golang.org/x/crypto/ssh"
 )
 
 type remoteCapabilities struct {
+	AccessMode   string   `json:"access_mode"`
+	SFTPReadOnly bool     `json:"sftp_read_only"`
 	Protocol     int      `json:"protocol"`
 	OS           string   `json:"os"`
 	Arch         string   `json:"arch"`
@@ -44,13 +47,14 @@ func capabilities(ctx context.Context, args []string, stdout, stderr io.Writer) 
 	if err := retry.Validate(); err != nil {
 		return err
 	}
+	ctx = retry.Context(ctx)
 	ticket, err := access.Read(f.Arg(0))
 	if err != nil {
 		return err
 	}
 	ctx, cancel := context.WithTimeout(ctx, *timeout)
 	defer cancel()
-	client, err := access.DialRetry(ctx, ticket, *iface, *retry)
+	client, err := access.DialRetry(ctx, ticket, *iface, retry.RetryOptions)
 	if err != nil {
 		return err
 	}
@@ -66,7 +70,28 @@ func capabilities(ctx context.Context, args []string, stdout, stderr io.Writer) 
 		return errors.New("target does not support capability discovery; older targets still support exec and SFTP")
 	}
 	var result remoteCapabilities
-	if len(data) > 4096 || json.Unmarshal(data, &result) != nil || result.Protocol != 1 || !capabilityName(result.OS) || !capabilityName(result.Arch) || !capabilityName(result.Shell) {
+	if len(data) > 4096 || json.Unmarshal(data, &result) != nil {
+		return errors.New("target returned invalid capabilities")
+	}
+	if err := validateRemoteCapabilities(&result); err != nil {
+		return err
+	}
+
+	if *asJSON {
+		return json.NewEncoder(stdout).Encode(result)
+	}
+	_, err = fmt.Fprintf(stdout, "Target: %s/%s\nAccess mode: %s\nSFTP read only: %t\nShell: %s\nPTY: %t\nPTY signals: %s\nExec: %t\nSFTP: %t\nEnvironment: %t\nWorking directory: %t\nJobs: %t\nPort forwarding: %t\n", result.OS, result.Arch, result.AccessMode, result.SFTPReadOnly, result.Shell, result.PTY, strings.Join(result.PTYSignals, ", "), result.Exec, result.SFTP, result.Env, result.CWD, result.Jobs, result.Forward)
+	return err
+}
+
+func capabilityName(value string) bool {
+	return len(value) > 0 && len(value) <= 64 && strings.IndexFunc(value, func(c rune) bool {
+		return !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '_' || c == '-' || c == '.')
+	}) < 0
+}
+
+func validateRemoteCapabilities(result *remoteCapabilities) error {
+	if result.Protocol != 1 || !capabilityName(result.OS) || !capabilityName(result.Arch) || !capabilityName(result.Shell) {
 		return errors.New("target returned invalid capabilities")
 	}
 	if len(result.PTYSignals) > 32 || !result.PTY && len(result.PTYSignals) != 0 {
@@ -80,15 +105,40 @@ func capabilities(ctx context.Context, args []string, stdout, stderr io.Writer) 
 	if result.Jobs && result.JobsProtocol != 1 || !result.Jobs && result.JobsProtocol != 0 {
 		return errors.New("target returned invalid job capabilities")
 	}
-	if *asJSON {
-		return json.NewEncoder(stdout).Encode(result)
+	if result.AccessMode == "" {
+		result.AccessMode = "full"
 	}
-	_, err = fmt.Fprintf(stdout, "Target: %s/%s\nShell: %s\nPTY: %t\nPTY signals: %s\nExec: %t\nSFTP: %t\nEnvironment: %t\nWorking directory: %t\nJobs: %t\nPort forwarding: %t\n", result.OS, result.Arch, result.Shell, result.PTY, strings.Join(result.PTYSignals, ", "), result.Exec, result.SFTP, result.Env, result.CWD, result.Jobs, result.Forward)
-	return err
+	switch result.AccessMode {
+	case "full":
+		if result.SFTPReadOnly {
+			return errors.New("target returned contradictory access capabilities")
+		}
+	case "sftp", "sftp-readonly":
+		if !result.SFTP || result.Exec || result.PTY || result.Env || result.CWD || result.ExecSignal || result.Jobs || result.Forward || len(result.PTYSignals) != 0 || result.SFTPReadOnly != (result.AccessMode == "sftp-readonly") {
+			return errors.New("target returned contradictory restricted capabilities")
+		}
+	default:
+		return errors.New("target returned invalid access mode")
+	}
+	return nil
 }
 
-func capabilityName(value string) bool {
-	return len(value) > 0 && len(value) <= 64 && strings.IndexFunc(value, func(c rune) bool {
-		return !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '_' || c == '-' || c == '.')
-	}) < 0
+// queryRemoteCapabilities preserves discovery compatibility with older SSH targets.
+func queryRemoteCapabilities(client *ssh.Client) (remoteCapabilities, bool, error) {
+	var result remoteCapabilities
+	ok, data, err := client.SendRequest("capabilities@shellpier", true, nil)
+	if err != nil {
+		return result, false, err
+	}
+	if !ok {
+		result.AccessMode = "full"
+		return result, false, nil
+	}
+	if len(data) > 4096 || json.Unmarshal(data, &result) != nil {
+		return result, true, errors.New("target returned invalid capabilities")
+	}
+	if err := validateRemoteCapabilities(&result); err != nil {
+		return result, true, err
+	}
+	return result, true, nil
 }

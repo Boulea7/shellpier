@@ -59,6 +59,7 @@ func forward(parent context.Context, args []string, stdout, stderr io.Writer) er
 	if err := retry.Validate(); err != nil {
 		return err
 	}
+	parent = retry.Context(parent)
 	ticket, err := access.Read(f.Arg(0))
 	if err != nil {
 		return err
@@ -75,7 +76,7 @@ func forward(parent context.Context, args []string, stdout, stderr io.Writer) er
 		ctx, done = context.WithDeadline(ctx, ticket.ExpiresAt)
 		defer done()
 	}
-	client, err := access.DialRetry(ctx, ticket, *iface, *retry)
+	client, err := access.DialRetry(ctx, ticket, *iface, retry.RetryOptions)
 	if err != nil {
 		return err
 	}
@@ -87,7 +88,7 @@ func forward(parent context.Context, args []string, stdout, stderr io.Writer) er
 	defer listener.Close()
 	// A transport loss ends this listener, including all accepted connections.
 	lost := make(chan error, 1)
-	refused := make(chan struct{}, 1)
+	refused := make(chan error, 1)
 	go func() { err := client.Wait(); lost <- err; cancel(); _ = listener.Close() }()
 	stop := context.AfterFunc(ctx, func() { _ = listener.Close(); _ = client.Close() })
 	defer stop()
@@ -121,10 +122,10 @@ func forward(parent context.Context, args []string, stdout, stderr io.Writer) er
 					return ctx.Err()
 				}
 				select {
-				case <-refused:
-					return errors.New("forward connection failed or target was not allowed; forwarding stopped")
-				case <-lost:
-					return errors.New("SSH connection closed; forwarding stopped without replay")
+				case cause := <-refused:
+					return fmt.Errorf("forward connection failed or target was not allowed; forwarding stopped: %w", cause)
+				case cause := <-lost:
+					return errors.Join(errors.New("SSH connection closed; forwarding stopped without replay"), cause)
 				default:
 					return ctx.Err()
 				}
@@ -147,7 +148,7 @@ func forward(parent context.Context, args []string, stdout, stderr io.Writer) er
 			done()
 			if err != nil {
 				select {
-				case refused <- struct{}{}:
+				case refused <- err:
 				default:
 				}
 				cancel()

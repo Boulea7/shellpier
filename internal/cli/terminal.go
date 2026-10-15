@@ -41,11 +41,12 @@ type terminalState struct {
 	Workdir    string    `json:"workdir,omitempty"`
 }
 type terminalConfig struct {
-	LogLimit  int64               `json:"log_limit,omitempty"`
-	Ticket    access.Ticket       `json:"ticket"`
-	Interface string              `json:"interface,omitempty"`
-	Retry     access.RetryOptions `json:"retry"`
-	Env       []string            `json:"env,omitempty"`
+	Connection *access.ConnectionOptions `json:"connection,omitempty"`
+	LogLimit   int64                     `json:"log_limit,omitempty"`
+	Ticket     access.Ticket             `json:"ticket"`
+	Interface  string                    `json:"interface,omitempty"`
+	Retry      access.RetryOptions       `json:"retry"`
+	Env        []string                  `json:"env,omitempty"`
 }
 type terminalMetadata struct {
 	Log               *terminalLogStatus `json:"log,omitempty"`
@@ -249,6 +250,7 @@ func terminalOpen(ctx context.Context, args []string, stdout, stderr io.Writer) 
 	if err := retry.Validate(); err != nil {
 		return err
 	}
+	ctx = retry.Context(ctx)
 	ticket, err := access.Read(f.Arg(0))
 	if err != nil {
 		return err
@@ -301,7 +303,7 @@ func terminalOpen(ctx context.Context, args []string, stdout, stderr io.Writer) 
 		return err
 	}
 	knownFiles["state.json"], _ = terminalFileIdentity(statePath)
-	if err = writeJSONPrivate(filepath.Join(path, "config.json"), terminalConfig{Ticket: ticket, Interface: *iface, Retry: *retry, Env: env, LogLimit: *logLimit}); err != nil {
+	if err = writeJSONPrivate(filepath.Join(path, "config.json"), terminalConfig{Ticket: ticket, Interface: *iface, Retry: retry.RetryOptions, Connection: &retry.Connection, Env: env, LogLimit: *logLimit}); err != nil {
 		return err
 	}
 	knownFiles["config.json"], _ = terminalFileIdentity(filepath.Join(path, "config.json"))
