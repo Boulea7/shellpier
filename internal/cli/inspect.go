@@ -33,6 +33,12 @@ type ticketSummary struct {
 func readInspectable(input string) (access.Ticket, error) {
 	var b []byte
 	var err error
+	if strings.HasPrefix(input, "target:") {
+		input, err = access.ResolveTarget("", strings.TrimPrefix(input, "target:"))
+		if err != nil {
+			return access.Ticket{}, err
+		}
+	}
 	if strings.HasPrefix(input, "sp1_") {
 		if len(input) > inspectionLimit {
 			return access.Ticket{}, errors.New("ticket exceeds 32 KiB")

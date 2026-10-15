@@ -274,8 +274,15 @@ func Parse(token string) (Ticket, error) {
 	return decodeJSON(b)
 }
 
-// Read accepts a token, @file, or a regular file containing a token or JSON.
+// Read accepts a token, target:NAME, @file, or a regular ticket file.
 func Read(input string) (Ticket, error) {
+	if strings.HasPrefix(input, "target:") {
+		path, err := ResolveTarget("", strings.TrimPrefix(input, "target:"))
+		if err != nil {
+			return Ticket{}, err
+		}
+		return Read("@" + path)
+	}
 	if strings.HasPrefix(input, "sp1_") {
 		return Parse(input)
 	}
