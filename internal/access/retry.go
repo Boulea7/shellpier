@@ -30,6 +30,12 @@ func (o RetryOptions) Validate() error {
 
 // DialRetry retries only connection establishment, never remote operations.
 func DialRetry(ctx context.Context, t Ticket, iface string, options RetryOptions) (*ssh.Client, error) {
+	return DialRetryWithOptions(ctx, t, iface, options, connectionOptions(ctx))
+}
+func DialRetryWithOptions(ctx context.Context, t Ticket, iface string, options RetryOptions, connection ConnectionOptions) (*ssh.Client, error) {
+	if err := connection.Validate(); err != nil {
+		return nil, err
+	}
 	if err := options.Validate(); err != nil {
 		return nil, err
 	}
@@ -43,7 +49,7 @@ func DialRetry(ctx context.Context, t Ticket, iface string, options RetryOptions
 	if !t.ExpiresAt.IsZero() {
 		ctx, cancel = context.WithDeadline(ctx, t.ExpiresAt)
 	}
-	client, err := retryDial(ctx, options, func() (*ssh.Client, error) { return Dial(ctx, t, iface) })
+	client, err := retryDial(ctx, options, func() (*ssh.Client, error) { return DialWithOptions(ctx, t, iface, connection) })
 	if cancel != nil {
 		if err != nil {
 			cancel()

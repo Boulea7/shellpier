@@ -16,7 +16,7 @@ import (
 // Dial opens a direct TCP connection. An explicit interface constrains the
 // socket's routing interface rather than merely selecting a source address.
 func Dial(ctx context.Context, address, iface string) (net.Conn, error) {
-	d := net.Dialer{Timeout: 10 * time.Second}
+	d := directDialer(ctx)
 	if iface != "" {
 		nic, err := net.InterfaceByName(iface)
 		if err != nil {
@@ -38,6 +38,14 @@ func Dial(ctx context.Context, address, iface string) (net.Conn, error) {
 		return nil, fmt.Errorf("dial via interface %q: %w", iface, err)
 	}
 	return conn, err
+}
+
+// A caller deadline owns its connect budget; otherwise preserve the default bound.
+func directDialer(ctx context.Context) net.Dialer {
+	if _, ok := ctx.Deadline(); ok {
+		return net.Dialer{}
+	}
+	return net.Dialer{Timeout: 10 * time.Second}
 }
 
 // Addresses returns candidate listener endpoints. Candidates are not evidence
