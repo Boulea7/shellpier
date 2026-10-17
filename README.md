@@ -35,6 +35,8 @@ macOS/Linux 把 `.\shellpier.exe` 换成 `./shellpier`。`access.json` 是私密
 
 交互操作用 `shellpier shell @access.json`；Agent 可用 `shellpier --json exec @access.json --command whoami` 或 `shellpier mcp serve`。目录共享、清单/管道传输、后台任务、多端口转发、SOCKS5 代理和用户级服务见[命令手册](docs/commands.md)，接口查询用 `shellpier --json schema`。
 
+v0.8 新增 host 托管的 `terminals`、反向 SOCKS5 与远端文件复制，详见[命令手册](docs/commands.md)。
+
 只想共享一个文件夹时，加上 `--root DIR`，对方通过文件传输访问该目录，无需配置系统账户或 SSH 服务。
 
 跨校园网、热点等 NAT 网络时，需要配置自己的或团队的[中继](docs/relay.md)。更多用法见[使用场景](docs/workflows.md)。

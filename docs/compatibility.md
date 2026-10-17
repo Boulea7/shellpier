@@ -66,6 +66,14 @@
 
 一次 SSH 调用取消与 host 生命周期不是同一边界：长任务须用 jobs 自己的 status/logs/wait/cancel 观察和结束。start 响应丢失时保留原操作 ID，先查询或用同 ID、同内容重试，不另造 ID 重复提交。日志、PTY 输出和传输进度均不代表命令级事务提交。
 
+### v0.8 开发线边界
+
+新 `terminals` 使用 host manager 托管同一 PTY，SSH 断线不终止它；host 退出或 TTL 到期结束，不跨 host 重启恢复。默认 full 启用，sftp/root 不提供。host 总记录 32、运行 4，每终端输出 1 MiB、write operation 256、队列 8；read 最多 32 KiB 并报告绝对 cursor/dropped。旧 `terminal` 仍使用控制端 worker。共享票据不提供个人身份归因。
+
+`forward --reverse --dynamic` 在目标端 loopback 监听，控制端解析域名并建立出站连接；目标端 `--allow-forward` 不限制该出站。`files copy` 只做远端普通文件独立副本，经控制端 SFTP 往返，默认不覆盖、不创建父目录，失败可留部分目标；不承诺 copy-data、hardlink、hash 或 fsync。
+
+上述是开发契约，不能由源码存在推导跨平台实机验收或已发布。Windows 仍需原生 ConPTY 生命周期验证；交叉编译不能代替运行测试，既有 Windows 崩溃的原始归因仍未确认。
+
 ## 网络条件
 
 校园网设备隔离、跨网手机 USB 热点和 CGNAT 可能阻止 direct 入站；双方可访问可信 WSS relay 时可使用出站路线。不同热点/运营商的策略必须实际验证。HTTP CONNECT 代理需显式获准并支持目标端口；PAC 自动发现、NTLM/Kerberos 交互认证和浏览器登录态不能假设被 CLI 自动继承。TLS 检查须通过受信任的组织证书配置，不能关闭证书验证。

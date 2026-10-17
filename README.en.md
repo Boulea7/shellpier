@@ -35,6 +35,8 @@ On macOS/Linux, replace `.\shellpier.exe` with `./shellpier`. `access.json` gran
 
 For an interactive terminal, use `shellpier shell @access.json`. Agents can use `shellpier --json exec @access.json --command whoami` or `shellpier mcp serve`. Directory sharing, file-list/stream transfers, background jobs, multiple port forwards, SOCKS5 proxies and user services are covered in the [command reference](docs/commands.md); discover interfaces with `shellpier --json schema`.
 
+v0.8 adds host-owned `terminals`, reverse SOCKS5 and remote file copying. See the [command reference](docs/commands.md).
+
 To share just one folder, add `--root DIR`. The peer gets file access inside that directory without setting up system accounts or an SSH service.
 
 Across NAT, including many campus and hotspot networks, configure your own or your team's [relay](docs/relay.md). See the [workflows](docs/workflows.md) for more examples.

@@ -2,6 +2,10 @@
 
 可以直接按网络情况选择连接方式；单机演练和诊断仅在需要时使用。默认会话有效期为 3 小时，示例短 TTL 可按需调整。示例中的 `./shellpier` 用于 macOS/Linux；PowerShell 换为 `.\shellpier.exe`，并给所有 `@file` 参数加引号。
 
+v0.8 开发线的新操作示例与完整契约见[命令手册](commands.md)。需要跨 SSH 断线保留终端时，用 `terminals open @access.json --operation-id open-001` 保存返回的 terminal ID；重接后用原票据和该 ID read/write，未知输入结果先查原 operation。旧 `terminal` 工作流仍适用于控制端 worker。
+
+目标电脑需要通过控制电脑出站时，控制端运行 `shellpier forward @access.json --reverse --dynamic --listen 0 --json`，目标电脑把 SOCKS5 客户端指向返回的 loopback 地址。复制目标电脑内单个文件用 `shellpier files copy @access.json source.txt copy.txt`，目标必须不存在，父目录须已存在；数据经控制端 SFTP 往返。
+
 ## 1. 单机演练：不需要外网或中继
 
 在解压目录开两个终端。终端 A：

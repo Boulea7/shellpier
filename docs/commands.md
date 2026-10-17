@@ -176,6 +176,33 @@ shellpier terminal tail --state ./terminal-session/state.json --cursor 0 --follo
 
 停止读取、取消或读取超时不关闭远端 terminal。tail 的返回值描述读取是否成功，不能当作远端命令退出码；需要判断终端结束原因，用 `terminal wait` / `status`。它不恢复丢失的历史输出，也不在 SSH 断线后恢复原 PTY；MCP 不开放 tail。
 
+## host 托管终端：terminals
+
+`terminals` 在目标 host 中保存 PTY，SSH 断线后重新连接，使用同一票据与 terminal ID 继续操作。它与上面的 `terminal` 本地 worker 是两个入口；旧入口和状态文件保持原用法。
+
+```sh
+shellpier terminals open @access.json --operation-id open-001 --lifetime 3h --json
+# 用 open 返回的 terminal.id 替换 TERM-ID
+shellpier terminals read @access.json TERM-ID --cursor 0 --limit 32768 --json
+shellpier terminals write @access.json TERM-ID --file ./input.txt --operation-id input-001 --json
+shellpier terminals status @access.json TERM-ID --json
+shellpier terminals list @access.json --json
+shellpier terminals resize @access.json TERM-ID --cols 120 --rows 40 --json
+shellpier terminals signal @access.json TERM-ID --signal INT --json
+shellpier terminals close @access.json TERM-ID --json
+# open 与 write 的操作查询分别使用以下形式
+shellpier terminals operation @access.json open-001 --json
+shellpier terminals operation @access.json input-001 --id TERM-ID --json
+```
+
+full 模式默认提供此能力，无额外许可开关；SFTP 专用模式和 `--root` 分享不提供。open 支持 `--command`、`--cwd`、重复 `--env`、`--term`、`--cols` 与 `--rows`；`--lifetime` 默认 3 小时、最多 24 小时，仍受 host TTL 限制。所有动作的 `--timeout` 默认 20 秒、最多 5 分钟，仅限制本次控制调用，不是 PTY 的运行期限。
+
+响应始终是有界 JSON，即使未加 `--json`。read 的 `output.data` 是 base64 字节，`next_cursor` 是下一次读取的绝对 cursor，`dropped` 报告已被环形缓冲覆盖的字节；每次最多 32 KiB，不提供屏幕模拟。write 恰选 `--text` 或 `--file`（`-` 为 stdin），单次非空输入最多 32 KiB。它不自动补换行，不判断某条 shell 命令是否完成。
+
+open/write 可显式指定 1–64 个 ASCII 字母、数字、点、下划线或连字符组成的稳定 operation ID；未指定时生成 ID。同 ID、同 payload 返回原操作，不重复执行；不同 payload 拒绝。超时、取消或断线后可能已经执行，不自动重发输入；保留原 ID，先查询 operation。状态为 pending/running/completed/failed，write 的完成表示输入写入结果，不表示 shell 命令成功。open 查询省略 `--id`，write 查询必须带对应 terminal ID。
+
+同一 host 最多保留 32 个终端记录、同时运行 4 个，每终端输出 ring 1 MiB、write operation 记录最多 256 个、输入队列 8 项；容量满时拒绝新操作。已结束记录保留至 manager 结束。host 退出、TTL、终端 lifetime 或 close 会结束 PTY；不跨 host 重启恢复，不自动重放输入。持有同一票据的人可控制该 host 内同一终端，这不是参与者身份或多人权限审计。
+
 ## 远端文件操作
 
 ```sh
@@ -183,6 +210,7 @@ shellpier files list @access.json . --limit 100 --json
 shellpier files stat @access.json remote.txt --json
 shellpier files read @access.json remote.txt --offset 0 --limit 4096 --json
 shellpier files mkdir @access.json work/subdir --parents --dry-run --json
+shellpier files copy @access.json source.txt copy.txt --dry-run --json
 shellpier files rename @access.json old.txt new.txt --dry-run --json
 shellpier files remove @access.json empty-dir --dry-run --json
 ```
@@ -190,6 +218,8 @@ shellpier files remove @access.json empty-dir --dry-run --json
 `list` 默认返回最多 1000 项，最大 10000，`has_more` 表示结果被截断；这是返回条目上限，不是分页或网络/内存读取上限。`stat` 使用 lstat，返回路径、名称、大小、mode、修改时间、目录与符号链接标志。
 
 `read` 默认最多 1 MiB，最大 16 MiB；不带 JSON 输出原始字节，JSON 使用 base64 并返回 `has_more`。`mkdir` 默认单层，`--parents` 才创建父目录。`rename` 先检查目标不存在，但 SFTP v3 的检查与重命名不是原子操作，并发创建目标仍有竞态。`remove` 仅删除文件、链接或空目录，不递归。修改动作支持 `--dry-run`，不执行写入；写入开始后不自动重试。
+
+`files copy TICKET SOURCE DEST`（v0.8 开发线）只复制远端普通文件，不接受 symlink、目录或已有目标，也不创建父目录；支持 `--dry-run` / `--json`，默认超时 5 分钟。数据经控制端固定缓冲读取并写回 SFTP，JSON 的 `transport` 为 `client-stream`；不在本地落中间文件，不是服务端 `copy-data` 或硬链接。复制不附加 hash、快照或 fsync 保证。失败可能留下目标部分文件；SFTP 缺少稳定文件身份，程序不会仅凭路径盲删可能已被替换的目标。
 
 ## 生命周期与中继参数
 
@@ -298,7 +328,9 @@ shellpier forward @access.json --reverse --listen 8080 --to 127.0.0.1:3000 --jso
 
 完整模式默认允许 TCP 转发，无需额外开关；转发连接与反向监听都有并发上限。监听仅限 loopback，端口 `0` 自动分配；`--timeout 0` 使用票据期限，停止进程关闭转发。需要精确限制正向目标时，在 share/host 设置可重复的 `--allow-forward HOST:PORT`。
 
-`--dynamic` 支持 SOCKS5 的无认证 CONNECT，接受 IPv4、IPv6 与域名；域名交给目标端解析。客户端应选择远端解析的 SOCKS5 模式，例如 `curl --socks5-hostname 127.0.0.1:1080 https://example.com/`。不支持 SOCKS4、BIND 或 UDP；不能与 `--to`、`--reverse` 合用。它仍受目标端 full 模式、可选目的地址限制与并发容量约束。代理仅监听 loopback，但本机其他进程也可能连接，因此不要把它当成隔离的专用网络。
+`--dynamic` 支持 SOCKS5 的无认证 CONNECT，接受 IPv4、IPv6 与域名；域名交给目标端解析。客户端应选择远端解析的 SOCKS5 模式，例如 `curl --socks5-hostname 127.0.0.1:1080 https://example.com/`。不支持 SOCKS4、BIND 或 UDP；不能与 `--to` 或 `--local` 合用。它仍受目标端 full 模式、可选目的地址限制与并发容量约束。代理仅监听 loopback，但本机其他进程也可能连接，因此不要把它当成隔离的专用网络。
+
+v0.8 开发线支持 `shellpier forward @access.json --reverse --dynamic --listen 0 --json`：在目标端 loopback 分配 SOCKS5 监听，实际地址见 listening 事件；域名解析与 TCP 出站连接发生在控制端。SOCKS 客户端在目标电脑连接此地址，使用远端解析模式。仅无认证 CONNECT，不支持 UDP/BIND；与 `--to`、`--local` 互斥，沿用 SSH/TTL 和反向容量边界。`--allow-forward` 只限制目标端正向出站，不能限制控制端的反向 SOCKS 出站。
 
 `proxy @access.json --to 127.0.0.1:8080` 提供单条 stdin/stdout TCP 字节桥，无需开本地监听端口；目的地址从目标端访问，与正向转发使用相同限制。它可用于自定义 `ProxyCommand`，但不自动登录下一跳，也不生成多跳票据。stdin 或远端先结束一个方向时，另一个方向可继续传输；两边结束后还会在有限时间内确认 SSH 连接仍有响应，失联或确认超时按失败返回，不重放字节。这仅确认传输状态，不证明目标服务已经提交业务操作。`--timeout 0` 使用票据期限，建连重试与保活参数只在带 `--to` 时可设置。
 

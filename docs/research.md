@@ -2,7 +2,7 @@
 
 [返回文档目录](README.md) · [路线图](roadmap.md) · [Legacy 指南](legacy-windows.md)
 
-调研日期：2026-10-16。本文记录 ShellPier v0.7 开发线的能力与选型取舍；构建、平台验收与发行状态分别以对应提交的 CI 和 Release 为准。外部工具的能力以所链接的一手文档为依据，不随 ShellPier 打包或自动安装。
+调研日期：2026-10-17。本文记录 ShellPier v0.8的能力与选型取舍；构建、平台验收与发行状态分别以对应提交的 CI 和 Release 为准。外部工具的能力以所链接的一手文档为依据，不随 ShellPier 打包或自动安装。
 
 ShellPier 面向当前用户临时开放的 CLI 与 AI 远程操作：建立可到期、固定主机公钥的访问，再执行命令或传文件。已经有系统 SSH、组织网络或文件同步设施时，复用它们往往更简单。
 
@@ -16,7 +16,7 @@ ShellPier 面向当前用户临时开放的 CLI 与 AI 远程操作：建立可�
 | croc | 用短码在两台机器间传文件或目录，包含中断续传 | PAKE 与中继降低文件交接门槛；它的文件交接目标不同于持续授权远端执行。ShellPier 保留票据与主机身份，不另加短码密钥交换路线。[项目说明][croc] |
 | Mosh | 网络短暂中断、切换 IP 后继续交互终端 | 使用 SSH 引导、UDP 同步屏幕状态，可以跳过中间画面；不是恢复完整 SSH 字节流。需要 UDP 可达，不直接替代 WSS 上的命令、文件与转发。[协议与使用说明][mosh] |
 | autossh | 监测 SSH 连接并在失败后重启，常用于长期隧道 | 重启客户端不等于保存远端进程。ShellPier 可以吸收失联检测与退避；不能据此自动重放可能已有副作用的命令。[官方 README][autossh] |
-| tmate | 多人进入同一终端，分别持有可写或只读入口 | 支持共享终端及公钥访问限制。ShellPier 的持久终端是控制端 worker，不是跨机器的多人协作服务；中继 host/client 角色也不是观察者/操作者权限。[官方发布说明][tmate] |
+| tmate | 多人进入同一终端，分别持有可写或只读入口 | 支持共享终端及公钥访问限制。ShellPier 的旧 `terminal` 使用控制端 worker，新 `terminals` 由 host 托管；两者都不是参与者身份与权限分离的多人协作服务；中继 host/client 角色也不是观察者/操作者权限。[官方发布说明][tmate] |
 | Tailscale SSH | 已有 tailnet，按设备身份、用户和访问策略登录 | 集成网络与 SSH 授权，check 模式可要求重新认证；交互式认证策略需要考虑自动化。它与“通过 Tailscale 网络连接普通 OpenSSH”是两种方案。[授权与 check 模式][tailscale]、[两种 SSH 路线][tailscale-ssh] |
 | Teleport | 组织统一身份、短期证书、角色策略、会话录制与访问治理 | CA、身份提供方和策略平台有其部署与运维成本。短期证书、空闲超时和证书过期后断开是不同策略；ShellPier 的票据 TTL 不等于完整组织身份系统。[认证架构][teleport-auth]、[角色策略][teleport-roles] |
 
@@ -55,7 +55,7 @@ v0.6 先补了可直接复用 SSH 数据流的三项功能。v0.7 继续吸收�
 
 | 比较 | 高置信事实 | 本轮工程取舍与剩余缺口 |
 |---|---|---|
-| OpenSSH / Chisel 多转发 | OpenSSH 可在一个连接中配置多个转发，Chisel 也提供多端口复用。[ssh][ssh]、[Chisel][chisel] | 重复 `forward --local` 补齐一个 SSH 下的多本地固定监听；先全部绑定再 ready，单目的失败隔离到 stream。没有增加运行时动态修改监听、远端动态 SOCKS 或通用路由；共享容量仍有界。 |
+| OpenSSH / Chisel 多转发 | OpenSSH 可在一个连接中配置多个转发，Chisel 也提供多端口复用。[ssh][ssh]、[Chisel][chisel] | 重复 `forward --local` 补齐一个 SSH 下的多本地固定监听；先全部绑定再 ready，单目的失败隔离到 stream。v0.7 没有增加运行时动态修改监听、远端动态 SOCKS 或通用路由；共享容量仍有界。 |
 | rsync / rclone 文件清单 | rsync `--files-from` / `--from0` 支持文件选择，但影响相对路径与递归语义；rclone 的过滤清单有自己的空白、注释和 raw 规则。[rsync][rsync]、[rclone filtering][rclone-filtering] | 只吸收“明确选文件”：有界 LF/CRLF 或 NUL 清单、普通文件、保留相对层级。ShellPier 不裁剪空格、不认注释，拒绝路径越界与大小写冲突；不声称与任一工具的清单完全兼容，不加入差量或镜像删除。 |
 | tmux / Mosh / tmate 的会话 | tmux detach/attach 由远端服务保存会话；Mosh 同步屏幕状态；tmate 支持共享会话及参与者入口。[tmux][tmux]、[Mosh][mosh]、[tmate][tmate-readme] | `terminal tail` 只把现有 worker 的有界字节输出交给管道工具，可跟随并报告丢失。它不是 host 托管 PTY、Mosh 漫游或多人共享。 |
 
@@ -63,7 +63,21 @@ OpenSSH 9.2 已引入 `ChannelTimeout` 和 `UnusedConnectionTimeout`，分别处
 
 SFTP 的扩展名称与后端实现也必须分开。OpenSSH 协议文档定义 `copy-data`，不代表任意 SFTP 服务都支持；当前 pkg/sftp v1.13.11 请求服务器未实现该扩展，ShellPier 不宣称服务端拷贝。rclone 的 SFTP server-side copy 则有 hardlink 路线，硬链接共享底层文件也不同于独立复制，不能照搬为“零成本复制”承诺。[OpenSSH PROTOCOL][openssh-protocol]、[pkg/sftp 源码][pkg-sftp-server]、[rclone SFTP][rclone-sftp]
 
-host 托管可重连 PTY 暂缓：它需要独立会话 manager、远端输出/输入状态、去重、TTL 与恢复身份，还要管理 ConPTY 的管道排空和关闭生命周期。Windows 官方文档说明创建、I/O 与关闭均需配套处理；仅重启 SSH 客户端或启用 ControlPersist 不保存远端 PTY。[Microsoft ConPTY][conpty]、[autossh][autossh]。tmate 官方仓库还说明公共服务已于 2025 年 7 月关闭，现需自托管，不能把历史公开入口作为现成依赖。[tmate README][tmate-readme]
+v0.7 暂缓 host 托管可重连 PTY，v0.8 新增独立 `terminals` 入口；其实现需要独立会话 manager、远端输出/输入状态、去重、TTL 与恢复身份，还要管理 ConPTY 的管道排空和关闭生命周期。Windows 官方文档说明创建、I/O 与关闭均需配套处理；仅重启 SSH 客户端或启用 ControlPersist 不保存远端 PTY。[Microsoft ConPTY][conpty]、[autossh][autossh]。tmate 官方仓库还说明公共服务已于 2025 年 7 月关闭，现需自托管，不能把历史公开入口作为现成依赖。[tmate README][tmate-readme]
+
+### v0.8：保存目标端 PTY，补齐反向 SOCKS 与独立文件复制
+
+| 对照 | 吸收的机制 | 当前实现与保留的缺口 |
+|---|---|---|
+| tmux / Mosh / tmate | 将进程生命周期与 SSH 连接分开；tmux 服务保存会话，Mosh 同步屏幕，tmate 另有参与者入口。[tmux][tmux]、[Mosh][mosh]、[tmate][tmate-readme] | `terminals` 的 host manager 保留同一 PTY、绝对输出 cursor 和 open/write 去重，断线后用同票据和 ID 继续；不做屏幕模拟、预测回显、UDP 漫游或参与者授权。host 退出/TTL 后不恢复，旧 `terminal` worker 保留。 |
+| OpenSSH 反向动态转发 | 远端监听接入 SOCKS，请求由客户端处理；不同于正向代理从服务端出站。[ssh][ssh] | `forward --reverse --dynamic --listen 0` 提供目标端 loopback SOCKS5 CONNECT，控制端解析和出站。`--allow-forward` 约束目标端正向出站，不能声称限制控制端出站；没有 UDP/BIND、Unix socket 或运行时监听管理。 |
+| SFTP copy-data / rclone hardlink | 协议定义、服务端实现和文件独立性分别核对。[OpenSSH PROTOCOL][openssh-protocol]、[pkg/sftp][pkg-sftp-server]、[rclone SFTP][rclone-sftp] | `files copy` 使用固定缓冲经控制端读回再写入远端，明确 `transport:client-stream`；不调用 copy-data、不创建硬链接，只复制普通文件且不覆盖、不创建父目录。失败可能留部分目标，不能凭路径盲删。 |
+
+本轮不实现完整 `ChannelTimeout` / `UnusedConnectionTimeout`：闲置 channel、无 channel 连接、授权 TTL、控制调用 timeout 和终端 lifetime 是不同期限。[OpenSSH 9.2][openssh-92]。PTY 的 `--timeout` 只限制控制调用，不表示已提交输入没有执行；未知结果先查原 operation ID。
+
+SFTP 扩展不能只看 advertise：pkg/sftp 的 `statvfs` 声明不代表 ShellPier rooted handler 已实现 `StatVFSFileCmder`；客户端存在 fsync 方法也不代表内置请求服务器实现 `fsync@openssh.com`。本轮不承诺 statvfs、fsync 或 copy-data 服务端能力，不添加普通复制 hash。[pkg/sftp 服务端源码][pkg-sftp-server]、[客户端源码](https://github.com/pkg/sftp/blob/v1.13.11/client.go)
+
+源码、自动化测试、平台原生运行、发行包验收和发布状态分别记录，不把交叉编译视为 Windows ConPTY 运行验收。
 
 ### 目录限定与反向监听为什么这样做
 
@@ -79,7 +93,7 @@ ShellPier 已有直连与 WSS 中继、邀请和撤销、TTL、SSH exec/PTY/SFTP
 
 已有票据可生成固定主机公钥的 OpenSSH 配置，使用原生 `ssh -F` 或 `sftp -F … -b …` 执行命令与批量传输。无需为批处理再造一套文件操作语言。WSS 配置使用 `ProxyCommand`；OpenSSH 明确规定它与 `ProxyJump` 竞争，先设置的选项会阻止另一项生效，不能简单叠加。[SSH 配置][ssh-config]、[sftp 批处理][sftp]
 
-后台 jobs 可在 SSH 连接断开后继续运行，并通过 operation ID 查询提交结果；范围限于同一个 host 进程。持久 terminal 保留控制端 worker、远端 PTY 和有界输出，可脱离当前调用继续操作；不是 host 重启后的恢复，也不保证 SSH 断线后重建原 PTY。对于结果未知的命令，应查询原 operation，而不是自动再执行一次。
+后台 jobs 与新 `terminals` 可在 SSH 连接断开后继续运行，并通过 operation ID 查询提交结果；范围限于同一个 host 进程。旧 `terminal` 保留控制端 worker、远端 PTY 和有界输出，可脱离当前调用继续操作；它不保证 SSH 断线后恢复原 PTY。两种终端都不跨 host 重启恢复。对于结果未知的命令，应查询原 operation，而不是自动再执行一次。
 
 文件传输提供目录遍历与排除、单文件续传。续传所需的身份与内容绑定自动在内部处理，用户不需要先生成或核对摘要；它不是可跨任意目标复用的缓存。
 

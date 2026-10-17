@@ -10,6 +10,7 @@
 | `internal/cli` | 命令分发、机器接口、持久终端与会话生命周期 |
 | `internal/access` | 票据、SSH 连接、主机公钥校验与配置生成 |
 | `internal/sshd` | 当前用户 SSH exec、PTY/SFTP、目录文件共享与转发 |
+| `internal/terminals` | host 生命周期内的 PTY、输入去重、有界输出与控制队列 |
 | `internal/jobs` | host 生命周期内的有界任务、去重与输出缓冲 |
 | `internal/relay` | HTTPS/WSS、角色配对、认证、容量、TTL 与撤销 |
 | `internal/platform` | 文件权限、Unix PTY/Windows ConPTY、命令进程树与防睡眠 |
@@ -41,7 +42,7 @@ exec 保留 stdout/stderr、退出码和输出截断信息；shell 使用 PTY �
 
 写入功能明确覆盖政策，失败只清理本次创建且仍能确认归属的文件。传输实现参考 `transfer*.go`；本地路径用 `filepath`，远端路径遵循 SFTP 约定。续传 journal 绑定方向、主机公钥、规范路径和源内容，提交保持不覆盖；硬链接不可用时用独占复制并报告非原子可见。目录传输先检查容量、路径冲突和特殊文件。普通传输直接复制，不增加全文件 hash 门槛；`--skip-existing` 跳过已有普通文件，不比较内容，结构冲突仍报错。仅续传在内部绑定原始来源与 partial，用户无需手动计算摘要。服务管理仅操作可验证归属的用户级资源，plan/dry-run 不修改状态。
 
-`--root DIR` 自动选择目录限定的 SFTP 模式，虚拟路径从 `/` 开始，同时关闭 exec、PTY、jobs 和转发。它不创建 OS shell 沙箱，不隔离目录内的挂载或既有硬链接别名。普通 full 模式默认提供有界 jobs 与 TCP 转发；可选参数用于有明确需要的限制，不在普通流程额外增加许可步骤。正向、反向、SOCKS5 CONNECT 与 `proxy --to` 复用 SSH 生命周期及服务端目的地址限制，连接中断不重放字节。SOCKS5 只协商无认证 CONNECT，不增加 UDP 或路由控制。流传输以 `-` 指代 stdin/stdout；下载 stdout 不得混入 JSON、进度或普通日志，上传继续独占新建目标。
+`--root DIR` 自动选择目录限定的 SFTP 模式，虚拟路径从 `/` 开始，同时关闭 exec、PTY、jobs 和转发。它不创建 OS shell 沙箱，不隔离目录内的挂载或既有硬链接别名。普通 full 模式默认提供有界 jobs 与 TCP 转发；可选参数用于有明确需要的限制，不在普通流程额外增加许可步骤。正向 SOCKS5 CONNECT 与 `proxy --to` 复用服务端目的地址限制；反向固定/SOCKS5 在控制端出站，不受目标端 `--allow-forward` 限制；各方向复用 SSH 生命周期，连接中断不重放字节。SOCKS5 只协商无认证 CONNECT，不增加 UDP 或路由控制。流传输以 `-` 指代 stdin/stdout；下载 stdout 不得混入 JSON、进度或普通日志，上传继续独占新建目标。
 
 OS 专有能力放在 `internal/platform` 或对应包的平台文件，通过 build tags 隔离。涉及服务、防火墙或防睡眠时明确权限、资源归属和恢复方式。Windows 命令测试包括首次启动、退出码与编码；Legacy 保持独立入口。
 
@@ -76,4 +77,4 @@ python3 scripts/validate_docs.py --root /path/to/unpacked-release
 
 Windows 构建使用隔离的 Go 1.27.2 副本回补官方运行时线程状态判断，不修改本机已安装 Go。原因、对照测试、复现方法与移除条件见 [Windows 运行时调查](windows-runtime.md)；不要把修复已知缺陷写成已确认原事故根因。
 
-多监听 forward 必须先全部绑定再报告 ready，任一绑定失败关闭已绑定监听；目的服务拒绝或单 stream 失败不取消整个转发，SSH 失联/TTL 才结束全组。文件清单的格式、容量、相对路径、大小写和源目标检查保持跨平台一致，预检后执行复检不宣称整批事务。terminal tail 的原始 stdout 与 MCP 协议流分离，取消读取不取消终端。host 托管可重连 PTY 需要独立 manager、状态恢复、输入去重、TTL 与 Windows ConPTY 生命周期设计，不能通过 ControlPersist 或重启客户端替代。
+多监听 forward 必须先全部绑定再报告 ready，任一绑定失败关闭已绑定监听；目的服务拒绝或单 stream 失败不取消整个转发，SSH 失联/TTL 才结束全组。文件清单的格式、容量、相对路径、大小写和源目标检查保持跨平台一致，预检后执行复检不宣称整批事务。terminal tail 的原始 stdout 与 MCP 协议流分离，取消读取不取消终端。v0.8 `terminals` 使用独立 host manager 保存 PTY、输出 cursor 与 open/write operation；控制调用超时不取消已提交操作，未知结果先查原 ID。测试覆盖 SSH 断线重接、同 ID 同/异 payload、队列与容量、host/TTL 关闭及 Windows ConPTY 排空，不能以 ControlPersist 或交叉编译代替。files copy 使用固定缓冲 SFTP 往返，不调用 shell 或硬链接；失败无法确认路径仍属于本次操作时保留部分文件。
