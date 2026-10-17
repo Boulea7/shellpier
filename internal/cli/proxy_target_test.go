@@ -122,6 +122,32 @@ func TestProxyTargetLifetime(t *testing.T) {
 	}
 }
 
+type proxyPendingDeadlineContext struct {
+	context.Context
+	deadline time.Time
+}
+
+func (c proxyPendingDeadlineContext) Deadline() (time.Time, bool) { return c.deadline, true }
+
+func TestProxyTargetDeadlineClassificationBeforeTimerPublication(t *testing.T) {
+	past := proxyPendingDeadlineContext{context.Background(), time.Now().Add(-time.Second)}
+	if past.Err() != nil || !errors.Is(proxyContextError(past), context.DeadlineExceeded) {
+		t.Fatal("expired deadline was lost while its timer error was pending")
+	}
+	future := proxyPendingDeadlineContext{context.Background(), time.Now().Add(time.Hour)}
+	if err := proxyContextError(future); err != nil {
+		t.Fatalf("classified an early connection loss as expiry: %v", err)
+	}
+	canceled, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := proxyContextError(proxyPendingDeadlineContext{canceled, past.deadline}); !errors.Is(err, context.Canceled) {
+		t.Fatalf("lost explicit cancellation: %v", err)
+	}
+	if err := proxyContextError(context.Background()); err != nil {
+		t.Fatalf("unbounded context acquired a deadline: %v", err)
+	}
+}
+
 func TestProxyTargetRefused(t *testing.T) {
 	ticket := forwardTicket(t, context.Background(), []string{"127.0.0.1:1"}, time.Minute)
 	var out bytes.Buffer

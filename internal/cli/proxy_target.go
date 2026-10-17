@@ -12,7 +12,7 @@ import (
 	"github.com/Boulea7/shellpier/internal/sshd"
 )
 
-func proxyTarget(parent context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer) error {
+func proxyTarget(parent context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer) (resultErr error) {
 	f := flags("proxy", stderr)
 	target := f.String("to", "", "destination host:port reached through the authenticated host")
 	iface := f.String("interface", "", "constrain direct TCP routing to this interface (macOS/Linux)")
@@ -78,6 +78,11 @@ func proxyTarget(parent context.Context, args []string, stdin io.Reader, stdout,
 		ctx, done = context.WithDeadline(ctx, ticket.ExpiresAt)
 		defer done()
 	}
+	defer func() {
+		if err := proxyContextError(ctx); err != nil {
+			resultErr = err
+		}
+	}()
 	client, err := access.DialRetry(ctx, ticket, *iface, retry.RetryOptions)
 	if err != nil {
 		return err
@@ -182,4 +187,16 @@ func proxyTarget(parent context.Context, args []string, stdin io.Reader, stdout,
 	case <-timer.C:
 		return errors.Join(errors.New("SSH proxy completion confirmation timed out"), context.DeadlineExceeded)
 	}
+}
+
+func proxyContextError(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	// The SSH client's independent expiry timer can close the transport before
+	// this context publishes its error. The deadline still bounds every return.
+	if deadline, ok := ctx.Deadline(); ok && !time.Now().Before(deadline) {
+		return context.DeadlineExceeded
+	}
+	return nil
 }

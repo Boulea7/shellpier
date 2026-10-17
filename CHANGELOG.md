@@ -5,6 +5,7 @@
 - 新增 host 托管 `terminals`，SSH 断线后可用原票据和 terminal ID 继续控制同一 PTY；open/write 使用有界 operation ID 去重与查询，host 退出或 TTL 到期即结束。旧 `terminal` 控制端 worker 保留。
 - 新增 `forward --reverse --dynamic`：目标端 loopback SOCKS5 CONNECT 监听，域名解析与出站连接发生在控制端。
 - 新增 `files copy TICKET SOURCE DEST`：经控制端 SFTP 固定缓冲流复制远端普通文件，生成独立副本，默认不覆盖；失败可能保留目标部分文件。
+- 修复 `proxy --to` 在票据到期边界偶尔将超时报告为普通 SSH 断线的竞态。
 - 同步命令 schema、MCP、Agent skill 与工具比较，明确终端生命周期、反向代理方向和文件复制边界。
 
 ## v0.7.0-alpha.1 — 2026-10-16
