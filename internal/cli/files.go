@@ -36,12 +36,12 @@ func filesInfo(p string, info os.FileInfo) filesMetadata {
 func files(parent context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer) (result error) {
 	_ = stdin
 	if len(args) == 0 || args[0] == "--help" || args[0] == "-h" {
-		_, err := fmt.Fprintln(stdout, "Usage: shellpier files list|stat|read|mkdir|rename|remove [flags] TICKET PATH [DEST]\nMetadata supports --json. read prints raw bytes or base64 JSON.\nMutations support --dry-run. mkdir supports --parents. rename refuses existing targets; its existence check is not atomic on SFTP v3. remove never recurses.")
+		_, err := fmt.Fprintln(stdout, "Usage: shellpier files list|stat|read|copy|mkdir|rename|remove [flags] TICKET PATH [DEST]\nMetadata supports --json. read prints raw bytes or base64 JSON.\nMutations support --dry-run. mkdir supports --parents. rename refuses existing targets; its existence check is not atomic on SFTP v3. remove never recurses.")
 		return err
 	}
 	action := args[0]
 	switch action {
-	case "list", "stat", "read", "mkdir", "rename", "remove":
+	case "list", "stat", "read", "copy", "mkdir", "rename", "remove":
 	default:
 		return fmt.Errorf("unknown files action %q", action)
 	}
@@ -50,7 +50,7 @@ func files(parent context.Context, args []string, stdin io.Reader, stdout, stder
 	iface := f.String("interface", "", "direct network interface")
 	timeout := f.Duration("timeout", 5*time.Minute, "total file operation timeout")
 	asJSON := f.Bool("json", false, "emit metadata or base64 read data as JSON")
-	mutation := action == "mkdir" || action == "rename" || action == "remove"
+	mutation := action == "copy" || action == "mkdir" || action == "rename" || action == "remove"
 	var dryRun, parents bool
 	if mutation {
 		f.BoolVar(&dryRun, "dry-run", false, "validate and describe without writing")
@@ -68,7 +68,7 @@ func files(parent context.Context, args []string, stdin io.Reader, stdout, stder
 	}
 	f.Usage = func() {
 		suffix := ""
-		if action == "rename" {
+		if action == "rename" || action == "copy" {
 			suffix = " DEST"
 		}
 		fmt.Fprintf(stderr, "Usage: shellpier files %s [flags] TICKET PATH%s\n", action, suffix)
@@ -78,11 +78,11 @@ func files(parent context.Context, args []string, stdin io.Reader, stdout, stder
 		return err
 	}
 	expected := 2
-	if action == "rename" {
+	if action == "rename" || action == "copy" {
 		expected = 3
 	}
 	if f.NArg() != expected {
-		return fmt.Errorf("usage: shellpier files %s [flags] TICKET PATH%s", action, map[bool]string{true: " DEST", false: ""}[action == "rename"])
+		return fmt.Errorf("usage: shellpier files %s [flags] TICKET PATH%s", action, map[bool]string{true: " DEST", false: ""}[action == "rename" || action == "copy"])
 	}
 	if *timeout <= 0 {
 		return errors.New("timeout must be positive")
@@ -112,8 +112,8 @@ func files(parent context.Context, args []string, stdin io.Reader, stdout, stder
 	ctx, cancel := context.WithTimeout(parent, *timeout)
 	defer cancel()
 	defer func() {
-		if ctx.Err() != nil {
-			result = ctx.Err()
+		if ctx.Err() != nil && !errors.Is(result, ctx.Err()) {
+			result = errors.Join(result, ctx.Err())
 		}
 	}()
 	client, err := access.DialRetry(ctx, ticket, *iface, retry.RetryOptions)
@@ -167,6 +167,8 @@ func files(parent context.Context, args []string, stdin io.Reader, stdout, stder
 			_, err = fmt.Fprintln(stdout, "More entries available; increase --limit.")
 		}
 		return err
+	case "copy":
+		return filesCopy(ctx, sf, p, f.Arg(2), dryRun, *asJSON, stdout)
 	case "read":
 		return filesRead(sf, p, offset, limit, *asJSON, stdout)
 	default:
