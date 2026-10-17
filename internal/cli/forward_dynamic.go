@@ -18,11 +18,18 @@ const dynamicHandshakeTimeout = 10 * time.Second
 
 // serveDynamicForward reads bounded SOCKS5 frames without buffering payload bytes.
 func serveDynamicForward(ctx context.Context, conn net.Conn, dial func(context.Context, string, string) (net.Conn, error)) error {
+	return serveDynamicForwardHandshake(ctx, conn, dial, dynamicHandshakeTimeout)
+}
+
+func serveDynamicForwardHandshake(ctx context.Context, conn net.Conn, dial func(context.Context, string, string) (net.Conn, error), timeout time.Duration) error {
 	stop := context.AfterFunc(ctx, func() { _ = conn.Close() })
 	defer stop()
-	if err := conn.SetDeadline(time.Now().Add(dynamicHandshakeTimeout)); err != nil {
-		return err
-	}
+	// SSH-backed connections do not support socket deadlines. Closing the stream
+	// bounds the handshake without closing the shared SSH transport.
+	handshake, cancelHandshake := context.WithTimeout(ctx, timeout)
+	defer cancelHandshake()
+	stopHandshake := context.AfterFunc(handshake, func() { _ = conn.Close() })
+	defer stopHandshake()
 	var header [2]byte
 	if _, err := io.ReadFull(conn, header[:]); err != nil {
 		return err
@@ -97,7 +104,7 @@ func serveDynamicForward(ctx context.Context, conn net.Conn, dial func(context.C
 	if port == 0 {
 		return fail(1, errors.New("SOCKS5 destination port must be positive"))
 	}
-	dialCtx, cancel := context.WithTimeout(ctx, sshd.DefaultForwardDialTimeout)
+	dialCtx, cancel := context.WithTimeout(handshake, sshd.DefaultForwardDialTimeout)
 	remote, err := dial(dialCtx, "tcp", net.JoinHostPort(host, strconv.Itoa(int(port))))
 	cancel()
 	if err != nil {
@@ -118,8 +125,8 @@ func serveDynamicForward(ctx context.Context, conn net.Conn, dial func(context.C
 	if err := dynamicReply(conn, 0); err != nil {
 		return err
 	}
-	if err := conn.SetDeadline(time.Time{}); err != nil {
-		return err
+	if !stopHandshake() {
+		return handshake.Err()
 	}
 	return sshd.BridgeForward(ctx, conn, remote)
 }

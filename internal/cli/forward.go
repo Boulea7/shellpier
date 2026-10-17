@@ -73,8 +73,16 @@ func forward(parent context.Context, args []string, stdout, stderr io.Writer) er
 	if err != nil {
 		return err
 	}
-	if *dynamic && (*reverse || *target != "") {
-		return errors.New("dynamic forwarding cannot be combined with --to or --reverse")
+	if *dynamic {
+		withTarget := false
+		f.Visit(func(option *flag.Flag) {
+			if option.Name == "to" {
+				withTarget = true
+			}
+		})
+		if withTarget {
+			return errors.New("dynamic forwarding cannot be combined with --to")
+		}
 	}
 	var destination string
 	if !*dynamic && len(locals) == 0 {
@@ -131,15 +139,15 @@ func forward(parent context.Context, args []string, stdout, stderr io.Writer) er
 	stop := context.AfterFunc(ctx, func() { _ = client.Close(); _ = listener.Close() })
 	defer stop()
 	event := struct {
-		SchemaVersion int    `json:"schema_version"`
-		Command       string `json:"command"`
-		Event         string `json:"event"`
-		Direction     string `json:"direction"`
-		LocalAddress  string `json:"local_address,omitempty"`
-		Target        string `json:"target"`
-		RemoteAddress string `json:"remote_address,omitempty"`
-		LocalTarget   string `json:"local_target,omitempty"`
-	}{SchemaVersion: 1, Command: "forward", Event: "listening", Direction: "local", LocalAddress: listener.Addr().String(), Target: destination}
+		SchemaVersion int     `json:"schema_version"`
+		Command       string  `json:"command"`
+		Event         string  `json:"event"`
+		Direction     string  `json:"direction"`
+		LocalAddress  string  `json:"local_address,omitempty"`
+		Target        *string `json:"target,omitempty"`
+		RemoteAddress string  `json:"remote_address,omitempty"`
+		LocalTarget   string  `json:"local_target,omitempty"`
+	}{SchemaVersion: 1, Command: "forward", Event: "listening", Direction: "local", LocalAddress: listener.Addr().String(), Target: &destination}
 	if *dynamic {
 		event.Direction = "dynamic"
 	}
@@ -148,11 +156,17 @@ func forward(parent context.Context, args []string, stdout, stderr io.Writer) er
 		event.RemoteAddress = event.LocalAddress
 		event.LocalAddress = ""
 		event.LocalTarget = destination
+		if *dynamic {
+			event.Direction = "reverse-dynamic"
+			event.Target = nil
+		}
 	}
 	if *machine {
 		err = json.NewEncoder(stdout).Encode(event)
 	} else {
-		if *dynamic {
+		if *dynamic && *reverse {
+			_, err = fmt.Fprintf(stdout, "Reverse SOCKS5 proxy listening on remote host: %s (control-side DNS; TCP CONNECT only)\nKeep this process open; transport loss stops forwarding.\n", event.RemoteAddress)
+		} else if *dynamic {
 			_, err = fmt.Fprintf(stdout, "SOCKS5 proxy listening: %s (remote DNS; TCP CONNECT only)\nKeep this process open; transport loss stops forwarding.\n", event.LocalAddress)
 		} else if *reverse {
 			_, err = fmt.Fprintf(stdout, "Reverse forward listening on remote host: %s -> local %s\nKeep this process open; transport loss stops forwarding.\n", event.RemoteAddress, destination)
@@ -199,6 +213,9 @@ func forward(parent context.Context, args []string, stdout, stderr io.Writer) er
 			defer conn.Close()
 			if *dynamic {
 				_ = serveDynamicForward(ctx, conn, func(dialCtx context.Context, network, address string) (net.Conn, error) {
+					if *reverse {
+						return (&net.Dialer{}).DialContext(dialCtx, network, address)
+					}
 					return pendingForwardDial(dialCtx, client, conn, network, address)
 				})
 				return

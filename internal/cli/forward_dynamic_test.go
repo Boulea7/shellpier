@@ -190,7 +190,7 @@ func TestDynamicForwardCLIRealSSHAndRequestIsolation(t *testing.T) {
 }
 
 func TestDynamicForwardValidationAndCancelHandshake(t *testing.T) {
-	for _, args := range [][]string{{"@missing", "--dynamic", "--to", "localhost:80"}, {"@missing", "--dynamic", "--reverse"}} {
+	for _, args := range [][]string{{"@missing", "--dynamic", "--to", "localhost:80"}, {"@missing", "--dynamic", "--reverse", "--to", "localhost:80"}, {"@missing", "--dynamic", "--reverse", "--to", ""}, {"@missing", "--dynamic", "--reverse", "--local", "0=localhost:80"}} {
 		if err := forward(context.Background(), args, io.Discard, io.Discard); err == nil || !strings.Contains(err.Error(), "cannot be combined") {
 			t.Fatalf("validation %v", err)
 		}
@@ -211,26 +211,16 @@ func TestDynamicForwardValidationAndCancelHandshake(t *testing.T) {
 	}
 }
 
-type shortDynamicDeadline struct{ net.Conn }
-
-func (c shortDynamicDeadline) SetDeadline(deadline time.Time) error {
-	if !deadline.IsZero() {
-		deadline = time.Now().Add(30 * time.Millisecond)
-	}
-	return c.Conn.SetDeadline(deadline)
-}
-
 func TestDynamicForwardHandshakeTimeoutAndInvalidAddress(t *testing.T) {
 	server, client := net.Pipe()
 	done := make(chan error, 1)
 	go func(server net.Conn, done chan error) {
 		defer server.Close()
-		done <- serveDynamicForward(context.Background(), shortDynamicDeadline{server}, nil)
+		done <- serveDynamicForwardHandshake(context.Background(), server, nil, 30*time.Millisecond)
 	}(server, done)
 	select {
 	case err := <-done:
-		var timeout net.Error
-		if !errors.As(err, &timeout) || !timeout.Timeout() {
+		if err == nil {
 			t.Fatalf("timeout %v", err)
 		}
 	case <-time.After(time.Second):
