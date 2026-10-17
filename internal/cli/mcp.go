@@ -477,6 +477,8 @@ func (s *mcpServer) execute(ctx context.Context, tool mcpTool, args []string) mc
 	err := s.run(ctx, args, strings.NewReader(""), output, io.Discard, s.options.version)
 	var unknown *JobStartUnknownError
 	unknownStart := errors.As(err, &unknown)
+	var terminalUnknown *TerminalOperationUnknownError
+	unknownTerminal := errors.As(err, &terminalUnknown)
 	if ctx.Err() != nil {
 		err = ctx.Err()
 	}
@@ -495,6 +497,11 @@ func (s *mcpServer) execute(ctx context.Context, tool mcpTool, args []string) mc
 	if err != nil {
 		detail := classifyJSONError(err)
 		result["error"] = detail
+		if unknownTerminal {
+			result["outcome"], result["retry_safe"] = "unknown", false
+			result["operation_id"], result["terminal_id"], result["action"] = terminalUnknown.OperationID, terminalUnknown.TerminalID, terminalUnknown.Action
+			result["error"] = classifyJSONError(terminalUnknown)
+		}
 		if tool.command[0] == "jobs" && len(tool.command) > 1 && tool.command[1] == "start" && (unknownStart || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)) {
 			result["outcome"] = "unknown"
 			if unknownStart {

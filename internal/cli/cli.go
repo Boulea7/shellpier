@@ -22,12 +22,15 @@ Your AI Agent's computer:
   shellpier shell TICKET
   shellpier terminal open TICKET --out NEW-DIRECTORY
   shellpier terminal tail --state FILE [--follow]
+  shellpier terminals open TICKET --operation-id ID [--command COMMAND]
   shellpier jobs start TICKET --command 'COMMAND' --operation-id ID
   shellpier forward TICKET --listen 127.0.0.1:0 --to HOST:PORT
   shellpier forward TICKET --dynamic --listen 1080
+  shellpier forward TICKET --reverse --dynamic --listen 1080
   shellpier forward TICKET --local 8080=HOST:PORT --local 5432=DB:5432
   shellpier proxy TICKET --to HOST:PORT
   shellpier files list TICKET . [--json]
+  shellpier files copy TICKET SOURCE DEST [--dry-run]
   shellpier ssh-config <access-ticket or @file> --out NEW-DIRECTORY
   shellpier upload <access-ticket or @file> LOCAL REMOTE
   shellpier download <access-ticket or @file> REMOTE LOCAL
@@ -116,6 +119,8 @@ func Run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 		return files(ctx, args[1:], stdin, stdout, stderr)
 	case "terminal":
 		return terminal(ctx, args[1:], stdin, stdout, stderr)
+	case "terminals":
+		return terminalsCommand(ctx, args[1:], stdin, stdout, stderr)
 	case "jobs":
 		return jobsCommand(ctx, args[1:], stdout, stderr)
 	case "forward":

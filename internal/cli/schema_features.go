@@ -26,7 +26,7 @@ func featureCommandSpecs() []commandSpec {
 		}
 		jobSpec.Subcommands = append(jobSpec.Subcommands, command(action, "Host-managed job "+action, usage+" [flags]", "metadata_or_bytes", "job response; wait returns nonzero when the job fails; logs JSON uses base64", effects, flags))
 	}
-	forwardSpec := command("forward", "Forward loopback ports through SSH", "forward TICKET (--to HOST:PORT | --dynamic | --local LISTEN=HOST:PORT...) [flags]", "foreground", "listening address and direction; repeated local emits one listening event with a forwards array after every bind succeeds; destination failures preserve listeners; cancellation, expiry or SSH loss stops the group", []string{"listener", "network"}, specFlags(jsonSpecFlag, interfaceSpecFlag, retrySpecFlags, []flagSpec{specFlag("listen", "string", "127.0.0.1:0", "Loopback bind address or port; remote with reverse"), specFlag("reverse", "bool", "false", "Listen on the remote computer and connect to a local destination"), specFlag("dynamic", "bool", "false", "Local SOCKS5 CONNECT with remote DNS; excludes to and reverse"), specFlag("local", "string[]", "", "Repeat LISTEN=HOST:PORT, at most 16 local forwards sharing one SSH connection; excludes explicit listen/to/reverse/dynamic"), specFlag("to", "string", "", "Destination HOST:PORT on the other side; required unless dynamic or local"), specFlag("timeout", "duration", "0s", "Forward lifetime; zero uses ticket lifetime")}))
+	forwardSpec := command("forward", "Forward loopback ports through SSH", "forward TICKET (--to HOST:PORT | --dynamic | --local LISTEN=HOST:PORT...) [flags]", "foreground", "listening address and direction; repeated local emits one listening event with a forwards array after every bind succeeds; destination failures preserve listeners; cancellation, expiry or SSH loss stops the group", []string{"listener", "network"}, specFlags(jsonSpecFlag, interfaceSpecFlag, retrySpecFlags, []flagSpec{specFlag("listen", "string", "127.0.0.1:0", "Loopback bind address or port; remote with reverse"), specFlag("reverse", "bool", "false", "Listen on the remote computer and connect to a local destination"), specFlag("dynamic", "bool", "false", "SOCKS5 CONNECT; remote DNS normally, controller DNS with reverse; excludes to and local"), specFlag("local", "string[]", "", "Repeat LISTEN=HOST:PORT, at most 16 local forwards sharing one SSH connection; excludes explicit listen/to/reverse/dynamic"), specFlag("to", "string", "", "Destination HOST:PORT on the other side; required unless dynamic or local"), specFlag("timeout", "duration", "0s", "Forward lifetime; zero uses ticket lifetime")}))
 	targetSpec := command("targets", "Manage private local ticket references", "targets ACTION [NAME] [flags]", "metadata", "safe alias metadata; credentials are neither copied nor renewed", []string{"local_read", "optional_local_write"}, nil)
 	for _, action := range []string{"add", "list", "show", "remove"} {
 		flags := specFlags(jsonSpecFlag, []flagSpec{specFlag("config-dir", "string", "", "Private config directory; SHELLPIER_CONFIG_DIR or user config/shellpier")})
@@ -58,5 +58,44 @@ func featureCommandSpecs() []commandSpec {
 	}
 	mcpSpec := command("mcp", "Expose bounded CLI operations over MCP stdio", "mcp serve [flags]", "jsonrpc", "newline-delimited JSON-RPC; stdout contains protocol only", []string{"stdio", "optional_network", "optional_local_write", "optional_remote_write"}, nil)
 	mcpSpec.Subcommands = []commandSpec{command("serve", "Run the MCP stdio server", "mcp serve [flags]", "jsonrpc", "MCP 2026-07-28 with 2025-11-25 initialization compatibility", mcpSpec.Effects, []flagSpec{specFlag("timeout", "duration", "1m0s", "Maximum per-tool time; at most 5m"), specFlag("max-concurrent", "int", "4", "Concurrent calls; 1..16"), specFlag("max-output", "int", "262144", "Captured tool bytes; 1024..1048576")})}
-	return []commandSpec{jobSpec, forwardSpec, targetSpec, serviceSpec, mcpSpec}
+	return []commandSpec{jobSpec, forwardSpec, targetSpec, serviceSpec, mcpSpec, hostTerminalsCommandSpec()}
+}
+
+func hostTerminalsCommandSpec() commandSpec {
+	spec := command("terminals", "Control host-owned PTYs across SSH connections", "terminals ACTION TICKET [ID] [flags]", "metadata", "bounded terminal state and base64 output; host exit ends all terminals", []string{"network", "optional_remote_exec", "optional_remote_write"}, nil)
+	for _, action := range []string{"open", "read", "write", "status", "list", "resize", "signal", "close", "operation"} {
+		flags := specFlags(jsonSpecFlag, interfaceSpecFlag, retrySpecFlags, []flagSpec{specFlag("timeout", "duration", "20s", "Total control call timeout; positive and at most 5m")})
+		effects := []string{"network", "remote_read"}
+		usage := "terminals " + action + " TICKET"
+		if action == "operation" {
+			usage += " OPERATION-ID"
+		} else if action != "open" && action != "list" {
+			usage += " TERMINAL-ID"
+		}
+		if action == "open" || action == "write" {
+			flags = append(flags, specFlag("operation-id", "string", "", "Stable mutation ID; generated if omitted; preserve for unknown outcome lookup"))
+		}
+		if action == "open" || action == "resize" {
+			flags = append(flags, specFlag("cols", "int", "80", "Terminal columns; 1..1000"), specFlag("rows", "int", "24", "Terminal rows; 1..1000"))
+		}
+		switch action {
+		case "open":
+			flags = append(flags, specFlag("command", "string", "", "Exact remote command; empty starts shell"), specFlag("cwd", "string", "", "Remote working directory"), specFlag("env", "string[]", "", "Repeatable remote NAME=VALUE"), specFlag("term", "string", "xterm-256color", "Terminal type"), specFlag("lifetime", "duration", "3h0m0s", "Terminal runtime; 1ms..24h, also bounded by host lifetime"))
+			effects = []string{"network", "remote_exec", "remote_write"}
+		case "write":
+			flags = append(flags, specFlag("text", "string", "", "Exact input; choose text or file, 1..32768 bytes"), specFlag("file", "string", "", "Local input file; - reads stdin only in CLI"))
+			effects = []string{"network", "optional_local_read", "remote_write"}
+		case "read":
+			flags = append(flags, specFlag("cursor", "uint64", "0", "Absolute output byte offset"), specFlag("limit", "int", "32768", "Maximum output bytes; 1..32768"))
+		case "operation":
+			flags = append(flags, specFlag("id", "string", "", "Terminal ID for write lookup; omit for open lookup"))
+		case "signal":
+			flags = append(flags, specFlag("signal", "string", "", "Signal supported by target PTY; query capabilities"))
+			effects = []string{"network", "remote_write"}
+		case "resize", "close":
+			effects = []string{"network", "remote_write"}
+		}
+		spec.Subcommands = append(spec.Subcommands, command(action, "Host-owned PTY "+action, usage+" [flags]", "metadata", "bounded JSON response; read data is base64 with absolute cursor and dropped count; open/write query original operation ID after unknown outcomes", effects, flags))
+	}
+	return spec
 }

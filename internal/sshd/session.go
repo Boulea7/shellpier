@@ -24,24 +24,25 @@ const (
 )
 
 type capabilities struct {
-	ReverseForward bool       `json:"reverse_forward"`
-	FileRoot       bool       `json:"file_root"`
-	AccessMode     AccessMode `json:"access_mode"`
-	SFTPReadOnly   bool       `json:"sftp_read_only"`
-	Protocol       int        `json:"protocol"`
-	OS             string     `json:"os"`
-	Arch           string     `json:"arch"`
-	Shell          string     `json:"shell"`
-	PTY            bool       `json:"pty"`
-	SFTP           bool       `json:"sftp"`
-	Exec           bool       `json:"exec"`
-	Env            bool       `json:"env"`
-	CWD            bool       `json:"cwd"`
-	ExecSignal     bool       `json:"exec_signal"`
-	PTYSignals     []string   `json:"pty_signals"`
-	Jobs           bool       `json:"jobs"`
-	JobsProtocol   int        `json:"jobs_protocol,omitempty"`
-	Forward        bool       `json:"forward"`
+	HostTerminalsProtocol int        `json:"host_terminals_protocol,omitempty"`
+	ReverseForward        bool       `json:"reverse_forward"`
+	FileRoot              bool       `json:"file_root"`
+	AccessMode            AccessMode `json:"access_mode"`
+	SFTPReadOnly          bool       `json:"sftp_read_only"`
+	Protocol              int        `json:"protocol"`
+	OS                    string     `json:"os"`
+	Arch                  string     `json:"arch"`
+	Shell                 string     `json:"shell"`
+	PTY                   bool       `json:"pty"`
+	SFTP                  bool       `json:"sftp"`
+	Exec                  bool       `json:"exec"`
+	Env                   bool       `json:"env"`
+	CWD                   bool       `json:"cwd"`
+	ExecSignal            bool       `json:"exec_signal"`
+	PTYSignals            []string   `json:"pty_signals"`
+	Jobs                  bool       `json:"jobs"`
+	JobsProtocol          int        `json:"jobs_protocol,omitempty"`
+	Forward               bool       `json:"forward"`
 }
 
 func (s *Server) globalRequests(requests <-chan *ssh.Request, reverse *reverseForwarder) {
@@ -49,8 +50,11 @@ func (s *Server) globalRequests(requests <-chan *ssh.Request, reverse *reverseFo
 		if reverse.HandleRequest(request) {
 			continue
 		}
-		if request.Type == JobsRequest && !s.fullAccess() {
+		if (request.Type == JobsRequest || request.Type == TerminalsRequest) && !s.fullAccess() {
 			request.Reply(false, nil)
+			continue
+		}
+		if HandleTerminalsRequest(s.Terminals, request) {
 			continue
 		}
 		if HandleJobsRequest(s.Jobs, request) {
@@ -72,6 +76,9 @@ func (s *Server) globalRequests(requests <-chan *ssh.Request, reverse *reverseFo
 		if !s.fullAccess() {
 			result.PTY, result.Exec, result.Env, result.CWD, result.Jobs, result.Forward = false, false, false, false, false, false
 			result.PTYSignals = nil
+		}
+		if s.fullAccess() && s.Terminals != nil && platform.TerminalSupported() {
+			result.HostTerminalsProtocol = 1
 		}
 		if result.Jobs {
 			result.JobsProtocol = 1

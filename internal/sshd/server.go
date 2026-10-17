@@ -14,6 +14,7 @@ import (
 
 	"github.com/Boulea7/shellpier/internal/jobs"
 	"github.com/Boulea7/shellpier/internal/platform"
+	"github.com/Boulea7/shellpier/internal/terminals"
 	"golang.org/x/crypto/ssh"
 	"os"
 )
@@ -30,6 +31,7 @@ type Server struct {
 	Shell            string
 	WorkDir          string
 	HandshakeTimeout time.Duration
+	Terminals        *terminals.Manager
 	Jobs             *jobs.Manager
 	Forward          *ForwardPolicy
 	Reverse          *ReverseForwardLimits

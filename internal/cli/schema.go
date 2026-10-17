@@ -110,7 +110,7 @@ func buildCommandSpecs() []commandSpec {
 	}
 	fileBase := specFlags(interfaceSpecFlag, retrySpecFlags, jsonSpecFlag, []flagSpec{specFlag("timeout", "duration", "5m0s", "Total file operation timeout")})
 	files := command("files", "Operate on remote paths with SFTP", "files ACTION [flags] TICKET PATH [DEST]", "metadata_or_bytes", "metadata or raw bytes; JSON read uses base64", []string{"network", "optional_remote_write"}, []flagSpec{})
-	for _, action := range []string{"list", "stat", "read", "mkdir", "rename", "remove"} {
+	for _, action := range []string{"list", "stat", "read", "mkdir", "rename", "copy", "remove"} {
 		ff := specFlags(fileBase)
 		effect := []string{"network", "remote_read"}
 		if action == "list" {
@@ -119,21 +119,27 @@ func buildCommandSpecs() []commandSpec {
 		if action == "read" {
 			ff = append(ff, specFlag("limit", "int64", "1048576", "Maximum bytes; up to 16777216"), specFlag("offset", "int64", "0", "Starting byte offset"))
 		}
-		if action == "mkdir" || action == "rename" || action == "remove" {
+		if action == "mkdir" || action == "rename" || action == "copy" || action == "remove" {
 			ff = append(ff, specFlag("dry-run", "bool", "false", "Describe without writing"))
 			effect = []string{"network", "remote_write"}
+		}
+		if action == "copy" {
+			effect = []string{"network", "remote_read", "remote_write"}
 		}
 		if action == "mkdir" {
 			ff = append(ff, specFlag("parents", "bool", "false", "Create missing parent directories"))
 		}
 		usage := "files " + action + " [flags] TICKET PATH"
-		if action == "rename" {
+		if action == "rename" || action == "copy" {
 			usage += " DEST"
 		}
 		mode, output := "metadata", "path metadata or mutation result"
 		if action == "read" {
 			mode = "bytes_or_json"
 			output = "raw bytes or JSON base64 data"
+		}
+		if action == "copy" {
+			output = "independent regular-file copy via bounded client streaming; destination must not exist; transport=client-stream; failure may retain a partial destination"
 		}
 		files.Subcommands = append(files.Subcommands, command(action, "Remote path "+action, usage, mode, output, effect, ff))
 	}

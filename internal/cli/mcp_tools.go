@@ -74,7 +74,7 @@ func mcpMakeTool(path []string, spec commandSpec) (mcpTool, bool) {
 		switch path[1] {
 		case "list", "stat", "read":
 			readOnly = true
-		case "write", "rename":
+		case "write", "rename", "copy":
 			min, max = 2, 2
 		case "mkdir", "remove":
 		default:
@@ -98,6 +98,21 @@ func mcpMakeTool(path []string, spec commandSpec) (mcpTool, bool) {
 			if !readOnly {
 				effects = append(effects, "remote_write", "local_write")
 			}
+		}
+	case "terminals":
+		if len(path) != 2 {
+			return mcpTool{}, false
+		}
+		ticket = true
+		switch path[1] {
+		case "read", "status", "list", "operation":
+			readOnly = true
+		case "open", "write", "resize", "signal", "close":
+		default:
+			return mcpTool{}, false
+		}
+		if path[1] != "open" && path[1] != "list" {
+			min, max = 1, 1
 		}
 	case "jobs":
 		if len(path) != 2 {
@@ -155,7 +170,7 @@ func mcpMakeTool(path []string, spec commandSpec) (mcpTool, bool) {
 		options[flag.Name] = property
 	}
 	properties["options"] = map[string]any{"type": "object", "properties": options, "additionalProperties": false, "description": "CLI option values, without leading dashes. Stdin is always closed; tool calls have a total timeout."}
-	if path[0] == "jobs" && len(path) > 1 && path[1] == "start" {
+	if mcpNeedsOperationID(path) {
 		properties["options"].(map[string]any)["required"] = []string{"operation-id"}
 		required = append(required, "options")
 	}
@@ -164,7 +179,7 @@ func mcpMakeTool(path []string, spec commandSpec) (mcpTool, bool) {
 		properties["positionals"].(map[string]any)["description"] = "Source and destination paths, or roots with files-from, in CLI order. Local stdin/stdout marker '-' is unavailable over MCP."
 		description = "Transfer files using explicit source and destination paths; files-from may name a local list file. MCP reserves stdin/stdout for JSON-RPC; payload pipes and files-from '-' are unavailable. Effects: " + strings.Join(effects, ", ") + ". Output: bounded transfer summary."
 	}
-	if path[0] == "exec" || (path[0] == "jobs" && path[1] == "start") {
+	if path[0] == "exec" || mcpNeedsOperationID(path) {
 		description += " A timeout or canceled response does not prove that execution or submission did not occur. Check state before retrying; never automatically replay."
 	}
 	return mcpTool{Name: "shellpier_" + name, Description: description, InputSchema: map[string]any{"type": "object", "properties": properties, "required": required, "additionalProperties": false}, Annotations: map[string]any{"readOnlyHint": readOnly, "destructiveHint": !readOnly, "idempotentHint": readOnly, "openWorldHint": ticket || path[0] == "doctor"}, Meta: map[string]any{"io.shellpier/effects": effects}, command: path, spec: spec, ticket: ticket, minPositionals: min, maxPositionals: max}, true
@@ -203,10 +218,10 @@ func (t mcpTool) arguments(raw json.RawMessage) ([]string, error) {
 			return nil, errors.New("Invalid positional argument")
 		}
 	}
-	if t.command[0] == "jobs" && len(t.command) > 1 && t.command[1] == "start" {
+	if mcpNeedsOperationID(t.command) {
 		id, ok := input.Options["operation-id"].(string)
 		if !ok || strings.TrimSpace(id) == "" {
-			return nil, errors.New("jobs start requires an explicit stable operation-id; preserve it if submission is uncertain")
+			return nil, errors.New("mutation requires an explicit stable operation-id; preserve it if submission is uncertain")
 		}
 	}
 	args := append([]string(nil), t.command...)
@@ -256,4 +271,8 @@ func (t mcpTool) arguments(raw json.RawMessage) ([]string, error) {
 		}
 	}
 	return args, nil
+}
+
+func mcpNeedsOperationID(path []string) bool {
+	return len(path) == 2 && (path[0] == "jobs" && path[1] == "start" || path[0] == "terminals" && (path[1] == "open" || path[1] == "write"))
 }

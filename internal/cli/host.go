@@ -23,6 +23,7 @@ import (
 	"github.com/Boulea7/shellpier/internal/platform"
 	"github.com/Boulea7/shellpier/internal/relay"
 	"github.com/Boulea7/shellpier/internal/sshd"
+	"github.com/Boulea7/shellpier/internal/terminals"
 	"golang.org/x/crypto/ssh"
 )
 
@@ -264,6 +265,13 @@ func serveHost(parent context.Context, h access.Ticket, a *access.Ticket, listen
 			mode = sshd.AccessSFTP
 			server.AccessMode = mode
 		}
+	}
+	if mode == sshd.AccessFull && platform.TerminalSupported() {
+		server.Terminals, err = terminals.New(ctx, terminals.Options{Shell: o.shell, WorkDir: o.workdir})
+		if err != nil {
+			return err
+		}
+		defer func() { cancel(); result = errors.Join(result, server.Terminals.Close()) }()
 	}
 	if mode == sshd.AccessFull && o.allowJobs {
 		options := jobs.DefaultOptions()

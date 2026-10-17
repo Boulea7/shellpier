@@ -67,6 +67,8 @@ type jsonErrorDetail struct {
 	Message        string `json:"message"`
 	RemoteExitCode *int   `json:"remote_exit_code,omitempty"`
 	OperationID    string `json:"operation_id,omitempty"`
+	TerminalID     string `json:"terminal_id,omitempty"`
+	Action         string `json:"action,omitempty"`
 	Outcome        string `json:"outcome,omitempty"`
 }
 
@@ -76,9 +78,15 @@ func classifyJSONError(err error) jsonErrorDetail {
 	var network net.Error
 	var usage *UsageError
 	var unknown *JobStartUnknownError
+	var terminalUnknown *TerminalOperationUnknownError
 	var jobExit *JobExitError
 	text := strings.ToLower(err.Error())
 	switch {
+	case errors.As(err, &terminalUnknown):
+		result.Code = "outcome_unknown"
+		result.Message = "Terminal operation could not be confirmed. Query the original operation ID before retrying; use --id only for write operations."
+		result.OperationID, result.TerminalID = terminalUnknown.OperationID, terminalUnknown.TerminalID
+		result.Action, result.Outcome = terminalUnknown.Action, "unknown"
 	case errors.As(err, &unknown):
 		result.Code = "outcome_unknown"
 		result.Message = "Job submission could not be confirmed. Query this operation ID before retrying."
