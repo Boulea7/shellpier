@@ -447,13 +447,33 @@ func TestTerminalRealBinaryFastOpenAndSnapshot(t *testing.T) {
 		t.Fatal(err)
 	}
 	for i := 0; i < 10; i++ {
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		// Allow the 30-second worker readiness window plus CLI process setup.
+		ctx, cancel := context.WithTimeout(context.Background(), 40*time.Second)
 		dir := filepath.Join(t.TempDir(), "terminal")
 		command := exec.CommandContext(ctx, binary, "terminal", "open", encoded, "--out", dir, "--command", "true", "--log-limit", "64", "--json")
+		started := time.Now()
 		data, err := command.CombinedOutput()
+		elapsed, contextErr := time.Since(started), ctx.Err()
 		cancel()
 		if err != nil {
-			t.Fatalf("fast open %d failed: %s %v", i, data, err)
+			// Inspect only safe progress fields; state and config contain credentials.
+			for _, name := range []string{"state.json", "config.json", "snapshot.json", "output.log"} {
+				info, statErr := os.Stat(filepath.Join(dir, name))
+				if statErr != nil {
+					t.Logf("fast open %d %s: %v", i, name, statErr)
+				} else {
+					t.Logf("fast open %d %s: size=%d mode=%s", i, name, info.Size(), info.Mode())
+				}
+			}
+			var progress struct {
+				ControlURL string `json:"control_url"`
+			}
+			stateData, stateErr := os.ReadFile(filepath.Join(dir, "state.json"))
+			if stateErr == nil {
+				stateErr = json.Unmarshal(stateData, &progress)
+				t.Logf("fast open %d state: claimed=%t decode_error=%v", i, progress.ControlURL != "", stateErr)
+			}
+			t.Fatalf("fast open %d failed after %s: context=%v ssh_starts=%d output=%q error=%v", i, elapsed, contextErr, starts.Load(), data, err)
 		}
 		var meta terminalMetadata
 		if json.Unmarshal(data, &meta) != nil || meta.StatePath == "" {

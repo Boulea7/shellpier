@@ -343,87 +343,129 @@ func TestCleanupRejectsTraversalManifest(t *testing.T) {
 }
 
 func TestRelayDisconnectDoesNotReplayCommand(t *testing.T) {
-	key := strings.Repeat("d", 64)
-	t.Setenv("SHELLPIER_RELAY_KEY", key)
-	rs, e := relay.New(key, 16)
-	if e != nil {
-		t.Fatal(e)
+	for _, fault := range []string{"running-connection", "all-relay-connections"} {
+		t.Run(fault, func(t *testing.T) {
+			key := strings.Repeat("d", 64)
+			t.Setenv("SHELLPIER_RELAY_KEY", key)
+			rs, e := relay.New(key, 16)
+			if e != nil {
+				t.Fatal(e)
+			}
+			defer rs.Close()
+			var mu sync.Mutex
+			var hijacked []net.Conn
+			type relayConnectionKey struct{}
+			commandTransport := make(chan net.Conn, 1)
+			server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if strings.HasPrefix(r.URL.Path, "/v1/connect/") {
+					select {
+					case commandTransport <- r.Context().Value(relayConnectionKey{}).(net.Conn):
+					default:
+					}
+				}
+				rs.ServeHTTP(w, r)
+			}))
+			server.Config.ConnContext = func(ctx context.Context, conn net.Conn) context.Context {
+				return context.WithValue(ctx, relayConnectionKey{}, conn)
+			}
+			server.Config.ConnState = func(conn net.Conn, state http.ConnState) {
+				if state == http.StateHijacked {
+					mu.Lock()
+					hijacked = append(hijacked, conn)
+					mu.Unlock()
+				}
+			}
+			server.Start()
+			defer server.Close()
+			dir := t.TempDir()
+			generated := filepath.Join(dir, "invite")
+			invoke(t, "invite", "--relay", server.URL, "--ttl", "1m", "--out", generated)
+			state, done := startHost(t, "host", "--json", "--work-dir", dir, "@"+filepath.Join(generated, "host.ticket"))
+			ticket, e := access.Read("@" + filepath.Join(generated, "access.json"))
+			if e != nil {
+				t.Fatal(e)
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			c, e := access.Dial(ctx, ticket, "")
+			if e != nil {
+				t.Fatal("relay SSH dial failed")
+			}
+			defer c.Close()
+			session, e := c.NewSession()
+			if e != nil {
+				t.Fatal(e)
+			}
+			defer session.Close()
+			command := "printf 'begun\\n' >> run-marker; sleep 30"
+			if runtime.GOOS == "windows" {
+				command = "Add-Content -LiteralPath run-marker -Value begun; Start-Sleep -Seconds 30"
+			}
+			if e = session.Start(command); e != nil {
+				t.Fatal("long command failed to start")
+			}
+			marker := filepath.Join(dir, "run-marker")
+			deadline := time.Now().Add(3 * time.Second)
+			for {
+				if b, e := os.ReadFile(marker); e == nil && strings.Contains(string(b), "begun") {
+					break
+				}
+				if time.Now().After(deadline) {
+					t.Fatal("long command did not start")
+				}
+				time.Sleep(20 * time.Millisecond)
+			}
+			if fault == "running-connection" {
+				select {
+				case conn := <-commandTransport:
+					if err := conn.Close(); err != nil {
+						t.Fatalf("disconnect command relay transport: %v", err)
+					}
+				default:
+					t.Fatal("running command has no observed relay client transport")
+				}
+			} else {
+				mu.Lock()
+				connections := append([]net.Conn(nil), hijacked...)
+				mu.Unlock()
+				if len(connections) < 2 {
+					t.Fatalf("relay pool not observed: %d connections", len(connections))
+				}
+				for _, conn := range connections {
+					_ = conn.Close()
+				}
+				// Release the old client observation before the one recovery invocation.
+				<-commandTransport
+			}
+			interrupted := make(chan error, 1)
+			go func() { interrupted <- session.Wait() }()
+			select {
+			case e := <-interrupted:
+				if e == nil {
+					t.Fatal("interrupted command reported success")
+				}
+			case <-time.After(3 * time.Second):
+				t.Fatal("disconnected command did not terminate")
+			}
+			// Allow the default 10s connection setup timeout within a bounded recovery
+			// call. Run exactly one new command; connection establishment alone may retry.
+			recoveryCtx, recoveryCancel := context.WithTimeout(context.Background(), 20*time.Second)
+			defer recoveryCancel()
+			recoveryStarted := time.Now()
+			var recovered, diagnostics bytes.Buffer
+			recoveryErr := Run(recoveryCtx, []string{"connect", "@" + filepath.Join(generated, "access.json"), "--", outputCommand()}, strings.NewReader(""), &recovered, &diagnostics, "test")
+			if recoveryErr != nil {
+				t.Fatalf("relay recovery failed after %s: %v (context: %v; diagnostics: %s)", time.Since(recoveryStarted), recoveryErr, recoveryCtx.Err(), diagnostics.String())
+			}
+			if recovered.String() != "中文链路" {
+				t.Fatalf("relay recovery output after %s: %q (context: %v)", time.Since(recoveryStarted), recovered.String(), recoveryCtx.Err())
+			}
+			b, e := os.ReadFile(marker)
+			if e != nil || strings.Count(string(b), "begun") != 1 {
+				t.Fatal("interrupted command was replayed")
+			}
+			invoke(t, "stop", "--state", state)
+			awaitHost(t, done, state)
+		})
 	}
-	defer rs.Close()
-	var mu sync.Mutex
-	var hijacked []net.Conn
-	server := httptest.NewUnstartedServer(rs)
-	server.Config.ConnState = func(c net.Conn, state http.ConnState) {
-		if state == http.StateHijacked {
-			mu.Lock()
-			hijacked = append(hijacked, c)
-			mu.Unlock()
-		}
-	}
-	server.Start()
-	defer server.Close()
-	dir := t.TempDir()
-	generated := filepath.Join(dir, "invite")
-	invoke(t, "invite", "--relay", server.URL, "--ttl", "30s", "--out", generated)
-	state, done := startHost(t, "host", "--json", "--work-dir", dir, "@"+filepath.Join(generated, "host.ticket"))
-	ticket, e := access.Read("@" + filepath.Join(generated, "access.json"))
-	if e != nil {
-		t.Fatal(e)
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	c, e := access.Dial(ctx, ticket, "")
-	if e != nil {
-		t.Fatal("relay SSH dial failed")
-	}
-	defer c.Close()
-	session, e := c.NewSession()
-	if e != nil {
-		t.Fatal(e)
-	}
-	defer session.Close()
-	command := "printf 'begun\\n' >> run-marker; sleep 30"
-	if runtime.GOOS == "windows" {
-		command = "Add-Content -LiteralPath run-marker -Value begun; Start-Sleep -Seconds 30"
-	}
-	if e = session.Start(command); e != nil {
-		t.Fatal("long command failed to start")
-	}
-	marker := filepath.Join(dir, "run-marker")
-	deadline := time.Now().Add(3 * time.Second)
-	for {
-		if b, e := os.ReadFile(marker); e == nil && strings.Contains(string(b), "begun") {
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatal("long command did not start")
-		}
-		time.Sleep(20 * time.Millisecond)
-	}
-	mu.Lock()
-	connections := append([]net.Conn(nil), hijacked...)
-	mu.Unlock()
-	for _, conn := range connections {
-		conn.Close()
-	}
-	interrupted := make(chan error, 1)
-	go func() { interrupted <- session.Wait() }()
-	select {
-	case e := <-interrupted:
-		if e == nil {
-			t.Fatal("interrupted command reported success")
-		}
-	case <-time.After(3 * time.Second):
-		t.Fatal("disconnected command did not terminate")
-	}
-	// A new command can use a repaired transport, while the interrupted command stays stopped.
-	if invoke(t, "connect", "@"+filepath.Join(generated, "access.json"), "--", outputCommand()) != "中文链路" {
-		t.Fatal("relay did not reconnect")
-	}
-	b, e := os.ReadFile(marker)
-	if e != nil || strings.Count(string(b), "begun") != 1 {
-		t.Fatal("interrupted command was replayed")
-	}
-	invoke(t, "stop", "--state", state)
-	awaitHost(t, done, state)
 }
