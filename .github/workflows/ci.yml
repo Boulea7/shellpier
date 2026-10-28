@@ -31,7 +31,7 @@ jobs:
           go-version: ${{ runner.os == 'Windows' && '1.27.2' || 'stable' }}
           check-latest: true
           cache: true
-      - uses: actions/setup-python@v7.0.0
+      - uses: actions/setup-python@v7.1.0
         with:
           python-version: '3.x'
       - if: runner.os == 'Windows'
