@@ -38,7 +38,7 @@ jobs:
       DIAGNOSTIC_BLOB_MIB: ${{ inputs.blob_mib }}
     steps:
       - uses: actions/checkout@v7.0.1
-      - uses: actions/setup-go@v7.0.0
+      - uses: actions/setup-go@v7.1.0
         with:
           go-version: '1.27.2'
           cache: true
